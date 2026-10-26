@@ -14,7 +14,38 @@
 #include "uv_crypto.h"
 #include "uv_wire.h"
 #include <sys/utsname.h>
+#include <sys/socket.h>
+#include <netinet/in.h>
+#include <arpa/inet.h>
+#include <unistd.h>
 #include <time.h>
+
+static char *get_primary_local_ip(void)
+{
+    int fd = socket(AF_INET, SOCK_DGRAM, 0);
+    if (fd >= 0) {
+        struct sockaddr_in sin;
+        memset(&sin, 0, sizeof(sin));
+        sin.sin_family = AF_INET;
+        sin.sin_port = htons(53);
+        inet_pton(AF_INET, "8.8.8.8", &sin.sin_addr);
+        if (connect(fd, (struct sockaddr *)&sin, sizeof(sin)) == 0) {
+            struct sockaddr_in local_sin;
+            socklen_t len = sizeof(local_sin);
+            if (getsockname(fd, (struct sockaddr *)&local_sin, &len) == 0) {
+                char ip_buf[INET_ADDRSTRLEN];
+                if (inet_ntop(AF_INET, &local_sin.sin_addr, ip_buf, sizeof(ip_buf))) {
+                    close(fd);
+                    if (!g_str_has_prefix(ip_buf, "127.")) {
+                        return g_strdup(ip_buf);
+                    }
+                }
+            }
+        }
+        close(fd);
+    }
+    return g_strdup("192.168.1.100");
+}
 
 bool uv_identity_init(UvClientIdentity *ident)
 {
@@ -43,23 +74,27 @@ bool uv_command_register(UvTlsSocket *sock, UvClientIdentity *ident, char **err_
     if (!sock || !ident) return false;
 
     char *b64_host = get_b64_hostname();
+    char *local_ip = get_primary_local_ip();
     const char *username = g_get_user_name();
     if (!username) username = "user";
 
+    /* UltraViewer server parses OS version as .NET System.Version:
+     * Build|Major|MajorRevision|Minor|MinorRevision|Revision
+     * All components MUST be integers, matching MacViewer: c|a|0|b|0|0 */
     struct utsname un;
-    char os_ver[256];
+    char os_ver[64];
+    unsigned int v_maj = 6, v_min = 0, v_build = 0;
     if (uname(&un) == 0) {
-        snprintf(os_ver, sizeof(os_ver), "%s|%s|0|0|0|0", un.release, un.sysname);
-    } else {
-        snprintf(os_ver, sizeof(os_ver), "Linux|6.0|0|0|0|0");
+        sscanf(un.release, "%u.%u.%u", &v_maj, &v_min, &v_build);
     }
+    snprintf(os_ver, sizeof(os_ver), "%u|%u|0|%u|0|0", v_build, v_maj, v_min);
 
     const char *fields[28];
     fields[0]  = "3";
     fields[1]  = ident->device_id;
     fields[2]  = ident->reg_password;
     fields[3]  = "0";
-    fields[4]  = "127.0.0.1";
+    fields[4]  = local_ip;
     fields[5]  = "0";
     fields[6]  = b64_host;
     fields[7]  = UV_CLIENT_VERSION;
@@ -86,6 +121,7 @@ bool uv_command_register(UvTlsSocket *sock, UvClientIdentity *ident, char **err_
 
     char *cmd_str = uv_join_fields(fields, 28);
     g_free(b64_host);
+    g_free(local_ip);
 
     uint8_t *ciphertext = NULL;
     size_t cipher_len = 0;

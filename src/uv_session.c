@@ -199,8 +199,11 @@ static gpointer uv_session_worker(gpointer user_data)
     }
 
     /* 4. Connect Relay Channel */
+    const char *relay_host = session->partner_lookup.relay_hostname[0] ?
+                             session->partner_lookup.relay_hostname : UV_DEFAULT_COMMAND_HOST;
+
     session->relay_sock = uv_tls_connect(session->partner_lookup.relay_ip, UV_DEFAULT_PORT,
-                                         session->partner_lookup.relay_hostname,
+                                         relay_host,
                                          session->insecure_tls, &err_msg);
     if (!session->relay_sock) {
         if (session->on_closed) session->on_closed(session, err_msg, session->callback_data);

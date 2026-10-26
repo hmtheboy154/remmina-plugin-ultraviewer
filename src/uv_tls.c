@@ -20,6 +20,7 @@
 #include <poll.h>
 #include <errno.h>
 #include <openssl/x509v3.h>
+#include <openssl/err.h>
 
 /* Load trusted Sectigo CA certificates from file bundle or system store */
 static void uv_tls_load_ca_certificates(SSL_CTX *ctx)
@@ -102,6 +103,19 @@ static int connect_tcp_with_timeout(const char *host, uint16_t port, int timeout
     return fd;
 }
 
+static int uv_tls_verify_callback(int preverify_ok, X509_STORE_CTX *ctx)
+{
+    if (!preverify_ok) {
+        int err = X509_STORE_CTX_get_error(ctx);
+        /* UltraViewer command servers and relays intermittently serve expired certificates
+         * which the official Windows client and MacViewer explicitly accept. */
+        if (err == X509_V_ERR_CERT_HAS_EXPIRED || err == X509_V_ERR_CERT_NOT_YET_VALID) {
+            return 1;
+        }
+    }
+    return preverify_ok;
+}
+
 UvTlsSocket *uv_tls_connect(const char *host, uint16_t port,
                             const char *expected_hostname,
                             bool insecure_tls, char **err_msg)
@@ -123,11 +137,12 @@ UvTlsSocket *uv_tls_connect(const char *host, uint16_t port,
         SSL_CTX_set_verify(ctx, SSL_VERIFY_NONE, NULL);
     } else {
         uv_tls_load_ca_certificates(ctx);
-        SSL_CTX_set_verify(ctx, SSL_VERIFY_PEER, NULL);
-        if (expected_hostname) {
-            X509_VERIFY_PARAM *param = SSL_CTX_get0_param(ctx);
+        X509_VERIFY_PARAM *param = SSL_CTX_get0_param(ctx);
+        X509_VERIFY_PARAM_set_flags(param, X509_V_FLAG_NO_CHECK_TIME);
+        if (expected_hostname && *expected_hostname) {
             X509_VERIFY_PARAM_set1_host(param, expected_hostname, 0);
         }
+        SSL_CTX_set_verify(ctx, SSL_VERIFY_PEER, uv_tls_verify_callback);
     }
 
     SSL *ssl = SSL_new(ctx);
@@ -143,7 +158,11 @@ UvTlsSocket *uv_tls_connect(const char *host, uint16_t port,
     SSL_set_fd(ssl, fd);
 
     if (SSL_connect(ssl) != 1) {
-        if (err_msg) *err_msg = g_strdup("TLS handshake failed");
+        long v_res = SSL_get_verify_result(ssl);
+        if (err_msg) {
+            *err_msg = g_strdup_printf("TLS handshake failed: %s",
+                                       X509_verify_cert_error_string(v_res));
+        }
         SSL_free(ssl);
         SSL_CTX_free(ctx);
         close(fd);
@@ -251,7 +270,7 @@ static bool read_exact(UvTlsSocket *sock, uint8_t *dest, size_t count, int timeo
     }
 
     while (filled < count) {
-        if (timeout_ms >= 0) {
+        if (SSL_pending(sock->ssl) == 0 && timeout_ms >= 0) {
             struct pollfd pfd;
             pfd.fd = sock->fd;
             pfd.events = POLLIN;
