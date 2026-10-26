@@ -864,10 +864,14 @@ static void remmina_plugin_ultraviewer_call_feature(RemminaProtocolWidget *gp, c
     case UV_FEATURE_TOOL_REFRESH: {
         RemminaFile *file = remmina_plugin_service->protocol_plugin_get_file(gp);
         int qval = remmina_plugin_service->file_get_int(file, "quality", 45);
+        if (gpdata->session) {
+            gpdata->session->quality_preset = qval;
+        }
         uv_session_queue_outbound(gpdata->session, false, (const uint8_t *)"32|||2", 6);
         char qbuf[32];
         g_snprintf(qbuf, sizeof(qbuf), "31|||%d", qval);
         uv_session_queue_outbound(gpdata->session, false, (const uint8_t *)qbuf, strlen(qbuf));
+        uv_session_refresh_screen(gpdata->session);
         break;
     }
     case UV_FEATURE_TOOL_CHAT:
@@ -971,6 +975,9 @@ static void remmina_plugin_ultraviewer_call_feature(RemminaProtocolWidget *gp, c
             q = remmina_plugin_service->file_get_int(file, "quality", 45);
         }
         if (q <= 0) q = 45;
+        if (gpdata->session) {
+            gpdata->session->quality_preset = q;
+        }
 
         uv_session_queue_outbound(gpdata->session, false, (const uint8_t *)"32|||2", 6);
         char q_cmd[32];

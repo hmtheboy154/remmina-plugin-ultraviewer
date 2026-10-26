@@ -110,4 +110,6 @@ void uv_session_toggle_sound(UvSession *session, bool enabled);
 
 bool uv_session_send_file(UvSession *session, const char *local_path);
 
+bool uv_session_refresh_screen(UvSession *session);
+
 #endif /* UV_SESSION_H */

@@ -206,6 +206,24 @@ bool uv_session_send_file(UvSession *session, const char *local_path)
     return uv_ft_send_file(session->ft_mgr, local_path);
 }
 
+bool uv_session_refresh_screen(UvSession *session)
+{
+    if (!session || !session->running) return false;
+
+    char *login_msg = uv_create_login_message(&session->client_ident,
+                                              &session->partner_lookup,
+                                              session->partner_password,
+                                              session->display_name,
+                                              0,
+                                              session->quality_preset,
+                                              session->connection_hash);
+    if (!login_msg) return false;
+
+    uv_session_queue_outbound(session, false, (const uint8_t *)login_msg, strlen(login_msg));
+    g_free(login_msg);
+    return true;
+}
+
 static void drain_outbound_queue(UvSession *session)
 {
     if (!session->relay_sock || !session->connected) return;
@@ -343,12 +361,10 @@ static gpointer uv_session_worker(gpointer user_data)
                             case 0: { /* Screen Initialization */
                                 UvScreenInit init;
                                 if (uv_parse_screen_init(parts, &init, NULL)) {
-                                    int32_t prev_seq = session->renderer ? session->renderer->last_frame_number : UV_RESET_FRAME_NUMBER;
                                     if (session->renderer) {
                                         uv_screen_renderer_free(session->renderer);
                                     }
                                     session->renderer = uv_screen_renderer_new(&init, session->custom_dict_path);
-                                    session->renderer->last_frame_number = prev_seq;
                                     session->connected = true;
 
                                     /* Ack initialization: send ASCII "17" */

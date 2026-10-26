@@ -11,6 +11,7 @@
 #include "uv_cursor.h"
 #include "uv_audio.h"
 #include "uv_file_transfer.h"
+#include "uv_screen.h"
 
 void uv_session_queue_outbound(UvSession *session, bool format_flag, const uint8_t *payload, size_t len)
 {
@@ -396,6 +397,46 @@ static void test_lookup_reply_parsing(void)
     printf("[✓] Lookup reply parsing and error reporting verified.\n");
 }
 
+static void test_screen_reinit(void)
+{
+    printf("[*] Testing dynamic screen reinitialization...\n");
+
+    /* Create initial 2736x1824 ScreenInit */
+    UvScreenInit init1;
+    memset(&init1, 0, sizeof(init1));
+    init1.width = 2736;
+    init1.height = 1824;
+    init1.tile_size = 16;
+    g_strlcpy(init1.version, "6.6.133", sizeof(init1.version));
+
+    UvScreenRenderer *r = uv_screen_renderer_new(&init1, NULL);
+    assert(r != NULL);
+    assert(r->width == 2736);
+    assert(r->height == 1824);
+    assert(r->last_frame_number == UV_RESET_FRAME_NUMBER);
+    assert(r->cairo_surface != NULL);
+
+    /* Free and re-init to 1280x720 (simulating resolution change + refresh) */
+    uv_screen_renderer_free(r);
+
+    UvScreenInit init2;
+    memset(&init2, 0, sizeof(init2));
+    init2.width = 1280;
+    init2.height = 720;
+    init2.tile_size = 16;
+    g_strlcpy(init2.version, "6.6.133", sizeof(init2.version));
+
+    r = uv_screen_renderer_new(&init2, NULL);
+    assert(r != NULL);
+    assert(r->width == 1280);
+    assert(r->height == 720);
+    assert(r->last_frame_number == UV_RESET_FRAME_NUMBER);
+    assert(r->cairo_surface != NULL);
+
+    uv_screen_renderer_free(r);
+    printf("[✓] Screen reinitialization verified.\n");
+}
+
 int main(void)
 {
     printf("=========================================\n");
@@ -411,6 +452,7 @@ int main(void)
     test_shortcuts_and_clipboard_cmd5();
     test_cursor_handling();
     test_lookup_reply_parsing();
+    test_screen_reinit();
 
     printf("=========================================\n");
     printf("All Unit Tests Passed Successfully!\n");

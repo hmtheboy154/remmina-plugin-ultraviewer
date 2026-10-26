@@ -127,22 +127,30 @@ void uv_screen_renderer_free(UvScreenRenderer *r)
 {
     if (!r) return;
 
+    g_mutex_lock(&r->mutex);
     if (r->zstd_dctx) {
         ZSTD_freeDCtx(r->zstd_dctx);
+        r->zstd_dctx = NULL;
     }
     g_free(r->dict_data);
+    r->dict_data = NULL;
 
     if (r->cairo_surface) {
         cairo_surface_destroy(r->cairo_surface);
+        r->cairo_surface = NULL;
     }
     g_free(r->temp_pixels);
+    r->temp_pixels = NULL;
 
     if (r->cache) {
         g_hash_table_destroy(r->cache);
+        r->cache = NULL;
     }
     if (r->cache_order) {
         g_queue_free(r->cache_order);
+        r->cache_order = NULL;
     }
+    g_mutex_unlock(&r->mutex);
 
     g_mutex_clear(&r->mutex);
     g_free(r);

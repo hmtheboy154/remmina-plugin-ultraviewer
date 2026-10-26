@@ -100,18 +100,21 @@ add_executable(test_ultraviewer
     src/uv_audio.c
     src/uv_file_transfer.c
     src/uv_command.c
+    src/uv_screen.c
 )
 target_include_directories(test_ultraviewer PRIVATE
     ${CMAKE_CURRENT_SOURCE_DIR}/include
     ${GTK3_INCLUDE_DIRS}
     ${OPENSSL_INCLUDE_DIRS}
     ${ZSTD_INCLUDE_DIRS}
+    ${JPEG_INCLUDE_DIRS}
     ${PULSE_INCLUDE_DIRS}
 )
 target_link_libraries(test_ultraviewer PRIVATE
     ${GTK3_LIBRARIES}
     ${OPENSSL_LIBRARIES}
     ${ZSTD_LIBRARIES}
+    ${JPEG_LIBRARIES}
     ${PULSE_LIBRARIES}
     m
     pthread
