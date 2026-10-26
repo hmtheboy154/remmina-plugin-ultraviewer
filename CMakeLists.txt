@@ -70,7 +70,7 @@ install(TARGETS remmina-plugin-ultraviewer
 
 install(DIRECTORY icons/
     DESTINATION "${CMAKE_INSTALL_DATADIR}/icons/hicolor"
-    FILES_MATCHING PATTERN "*.svg"
+    FILES_MATCHING PATTERN "*.svg" PATTERN "*.png"
 )
 
 install(FILES "${CMAKE_CURRENT_SOURCE_DIR}/certs/sectigo_roots.pem"
