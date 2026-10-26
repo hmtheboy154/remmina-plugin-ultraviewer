@@ -354,8 +354,9 @@ static gpointer uv_session_worker(gpointer user_data)
                                     /* Ack initialization: send ASCII "17" */
                                     uv_session_queue_outbound(session, false, (const uint8_t *)"17", 2);
 
-                                    /* Enable remote cursor: send "28|||1" */
-                                    uv_session_queue_outbound(session, false, (const uint8_t *)"28|||1", 6);
+                                    /* Enable/disable remote cursor: send "28|||1" or "28|||0" */
+                                    const char *cur_cmd = session->show_cursor ? "28|||1" : "28|||0";
+                                    uv_session_queue_outbound(session, false, (const uint8_t *)cur_cmd, strlen(cur_cmd));
 
                                     /* Request remote computer sound if enabled */
                                     if (session->sound_enabled) {

@@ -60,6 +60,7 @@ struct _UvSession {
     /* Subsystems */
     UvScreenRenderer *renderer;
     UvCursorManager *cursor_mgr;
+    bool show_cursor;
     UvAudio *audio;
     bool sound_enabled;
     UvFileTransferManager *ft_mgr;
