@@ -32,6 +32,8 @@ typedef struct {
     bool wallpaper_visible;
     bool closed;
     bool user_cancelled;
+    bool connection_opened;
+    bool sound_muted;
 
     /* Coalesced redraw */
     volatile gint redraw_pending;

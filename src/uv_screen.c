@@ -15,9 +15,10 @@
 
 static inline uint32_t rgb555_to_xrgb8888(uint16_t v)
 {
-    uint32_t r = (v & 31);
+    /* RGB555: bit 0..4 = Blue, bit 5..9 = Green, bit 10..14 = Red (Windows GDI / UltraViewer wire) */
+    uint32_t b = (v & 31);
     uint32_t g = (v >> 5) & 31;
-    uint32_t b = (v >> 10) & 31;
+    uint32_t r = (v >> 10) & 31;
     uint32_t r8 = (r << 3) | (r >> 2);
     uint32_t g8 = (g << 3) | (g >> 2);
     uint32_t b8 = (b << 3) | (b >> 2);
@@ -29,7 +30,7 @@ static inline uint16_t xrgb8888_to_rgb555(uint32_t px)
     uint16_t r5 = (uint16_t)((px >> 16) & 0xFF) >> 3;
     uint16_t g5 = (uint16_t)((px >> 8) & 0xFF) >> 3;
     uint16_t b5 = (uint16_t)(px & 0xFF) >> 3;
-    return (b5 << 10) | (g5 << 5) | r5;
+    return (r5 << 10) | (g5 << 5) | b5;
 }
 
 static uint8_t *load_screen_dictionary(const char *custom_path, size_t *out_size)
@@ -413,10 +414,13 @@ bool uv_screen_apply_frame(UvScreenRenderer *r, const GArray *parts, char **err_
         return false;
     }
     int32_t frame_num = uv_read_i32_le(p4->data);
+    if (r->last_frame_number == UV_RESET_FRAME_NUMBER) {
+        r->last_frame_number = frame_num - 1;
+    }
     int32_t expected = r->last_frame_number + 1;
     if (frame_num != expected) {
-        if (err_msg) *err_msg = g_strdup_printf("Frame sequence mismatch: expected %d, got %d", expected, frame_num);
-        return false;
+        /* On sequence jump or resolution switch, resynchronize to avoid stalling stream */
+        r->last_frame_number = frame_num - 1;
     }
 
     /* Part 1: Main rectangles */
@@ -540,8 +544,8 @@ bool uv_screen_apply_frame(UvScreenRenderer *r, const GArray *parts, char **err_
                 int16_t aw = uv_read_i16_le(rec + 4);
                 int16_t ah = uv_read_i16_le(rec + 6);
 
-                for (int ty = 0; ty < ah; ty += tile_sz) {
-                    for (int tx = 0; tx < aw; tx += tile_sz) {
+                for (int tx = 0; tx < aw; tx += tile_sz) {
+                    for (int ty = 0; ty < ah; ty += tile_sz) {
                         int cw = (aw - tx < tile_sz) ? (aw - tx) : tile_sz;
                         int ch = (ah - ty < tile_sz) ? (ah - ty) : tile_sz;
 

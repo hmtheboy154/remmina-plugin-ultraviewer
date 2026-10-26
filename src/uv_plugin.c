@@ -27,6 +27,8 @@ enum {
     UV_FEATURE_UNFOCUS,
     UV_FEATURE_TOOL_REFRESH,
     UV_FEATURE_TOOL_CHAT,
+    UV_FEATURE_TOOL_SENDFILE,
+    UV_FEATURE_TOOL_AUDIO,
     UV_FEATURE_TOOL_SENDCTRLALTDEL,
     UV_FEATURE_TOOL_LOCK,
     UV_FEATURE_TOOL_REBOOT,
@@ -87,6 +89,12 @@ static const RemminaProtocolSetting remmina_plugin_ultraviewer_advanced_settings
         .compact = FALSE
     },
     {
+        .type = REMMINA_PROTOCOL_SETTING_TYPE_CHECK,
+        .name = "disablesound",
+        .label = N_("Disable Remote Audio"),
+        .compact = FALSE
+    },
+    {
         .type = REMMINA_PROTOCOL_SETTING_TYPE_FILE,
         .name = "dictpath",
         .label = N_("Dictionary Path"),
@@ -115,6 +123,18 @@ static const RemminaProtocolFeature remmina_plugin_ultraviewer_features[] = {
         .id = UV_FEATURE_TOOL_CHAT,
         .opt1 = (gpointer)N_("Chat…"),
         .opt2 = (gpointer)"face-smile"
+    },
+    {
+        .type = REMMINA_PROTOCOL_FEATURE_TYPE_TOOL,
+        .id = UV_FEATURE_TOOL_SENDFILE,
+        .opt1 = (gpointer)N_("Send File…"),
+        .opt2 = (gpointer)"document-send"
+    },
+    {
+        .type = REMMINA_PROTOCOL_FEATURE_TYPE_TOOL,
+        .id = UV_FEATURE_TOOL_AUDIO,
+        .opt1 = (gpointer)N_("Toggle Audio"),
+        .opt2 = (gpointer)"audio-volume-high"
     },
     {
         .type = REMMINA_PROTOCOL_FEATURE_TYPE_TOOL,
@@ -209,6 +229,9 @@ static gboolean remmina_plugin_ultraviewer_on_draw(GtkWidget *widget, cairo_t *c
                             (double)a.height / (double)gpdata->remote_height);
         }
         cairo_set_source_surface(cr, r->cairo_surface, 0, 0);
+        if (scale_mode != REMMINA_PROTOCOL_WIDGET_SCALE_MODE_NONE) {
+            cairo_pattern_set_filter(cairo_get_source(cr), (cairo_filter_t)remmina_plugin_service->pref_get_scale_quality());
+        }
         cairo_paint(cr);
     }
     g_mutex_unlock(&r->mutex);
@@ -390,9 +413,15 @@ static gboolean on_connected_idle(gpointer user_data)
         gtk_widget_set_size_request(GTK_WIDGET(gpdata->drawing_area), task->width, task->height);
     }
 
-    remmina_plugin_service->protocol_plugin_desktop_resize(gpdata->gp);
-    remmina_plugin_service->protocol_plugin_update_align(gpdata->gp);
-    remmina_plugin_service->protocol_plugin_signal_connection_opened(gpdata->gp);
+    if (!gpdata->connection_opened) {
+        gpdata->connection_opened = true;
+        remmina_plugin_service->protocol_plugin_desktop_resize(gpdata->gp);
+        remmina_plugin_service->protocol_plugin_update_align(gpdata->gp);
+        remmina_plugin_service->protocol_plugin_signal_connection_opened(gpdata->gp);
+    } else {
+        remmina_plugin_service->protocol_plugin_desktop_resize(gpdata->gp);
+        remmina_plugin_service->protocol_plugin_update_align(gpdata->gp);
+    }
     gtk_widget_queue_draw(gpdata->drawing_area);
 
     g_free(task);
@@ -558,14 +587,48 @@ static void remmina_plugin_ultraviewer_free(RemminaPluginUltraviewerData *gpdata
     g_free(gpdata);
 }
 
+static void uv_on_drag_data_received(GtkWidget *widget, GdkDragContext *context,
+                                     gint x, gint y, GtkSelectionData *data,
+                                     guint info, guint time, gpointer user_data)
+{
+    (void)widget; (void)x; (void)y; (void)info;
+    RemminaProtocolWidget *gp = (RemminaProtocolWidget *)user_data;
+    RemminaPluginUltraviewerData *gpdata = GET_PLUGIN_DATA(gp);
+    if (!gpdata || !gpdata->session) {
+        gtk_drag_finish(context, FALSE, FALSE, time);
+        return;
+    }
+
+    gchar **uris = gtk_selection_data_get_uris(data);
+    if (uris) {
+        for (int i = 0; uris[i]; i++) {
+            char *filename = g_filename_from_uri(uris[i], NULL, NULL);
+            if (filename) {
+                uv_session_send_file(gpdata->session, filename);
+                g_free(filename);
+            }
+        }
+        g_strfreev(uris);
+        gtk_drag_finish(context, TRUE, FALSE, time);
+    } else {
+        gtk_drag_finish(context, FALSE, FALSE, time);
+    }
+}
+
 static void remmina_plugin_ultraviewer_init(RemminaProtocolWidget *gp)
 {
     RemminaPluginUltraviewerData *gpdata = g_new0(RemminaPluginUltraviewerData, 1);
     gpdata->gp = gp;
     gpdata->drawing_area = gtk_drawing_area_new();
     gtk_widget_set_can_focus(gpdata->drawing_area, TRUE);
+    gtk_widget_set_hexpand(gpdata->drawing_area, TRUE);
+    gtk_widget_set_vexpand(gpdata->drawing_area, TRUE);
     gtk_container_add(GTK_CONTAINER(gp), gpdata->drawing_area);
     gtk_widget_show(gpdata->drawing_area);
+
+    gtk_drag_dest_set(gpdata->drawing_area, GTK_DEST_DEFAULT_ALL, NULL, 0, GDK_ACTION_COPY);
+    gtk_drag_dest_add_uri_targets(gpdata->drawing_area);
+    g_signal_connect(gpdata->drawing_area, "drag-data-received", G_CALLBACK(uv_on_drag_data_received), gp);
 
     gtk_widget_add_events(gpdata->drawing_area,
         GDK_POINTER_MOTION_MASK |
@@ -600,6 +663,7 @@ static gboolean remmina_plugin_ultraviewer_open_connection(RemminaProtocolWidget
     int quality = remmina_plugin_service->file_get_int(file, "quality", 45);
     gboolean showcursor = remmina_plugin_service->file_get_int(file, "showcursor", FALSE);
     gboolean disableclipboard = remmina_plugin_service->file_get_int(file, "disableclipboard", FALSE);
+    gboolean disablesound = remmina_plugin_service->file_get_int(file, "disablesound", FALSE);
     gboolean insecure_tls = remmina_plugin_service->file_get_int(file, "insecure_tls", FALSE);
     gboolean viewonly = remmina_plugin_service->file_get_int(file, "viewonly", FALSE);
 
@@ -615,6 +679,7 @@ static gboolean remmina_plugin_ultraviewer_open_connection(RemminaProtocolWidget
     gpdata->view_only = viewonly;
     gpdata->show_cursor = showcursor;
     gpdata->disable_clipboard = disableclipboard;
+    gpdata->sound_muted = disablesound;
 
     remmina_plugin_service->protocol_plugin_register_hostkey(gp, gpdata->drawing_area);
 
@@ -640,6 +705,7 @@ static gboolean remmina_plugin_ultraviewer_open_connection(RemminaProtocolWidget
     }
 
     gpdata->session = uv_session_new(server, password, default_user, dictpath, quality, insecure_tls, gpdata);
+    gpdata->session->sound_enabled = !disablesound;
 
     gpdata->session->on_connected = uv_session_connected_cb;
     gpdata->session->on_frame_ready = uv_session_frame_ready_cb;
@@ -698,6 +764,31 @@ static void remmina_plugin_ultraviewer_call_feature(RemminaProtocolWidget *gp, c
             uv_chat_on_destroy
         );
         break;
+    case UV_FEATURE_TOOL_SENDFILE: {
+        GtkWidget *toplevel = gtk_widget_get_toplevel(gpdata->drawing_area);
+        GtkWidget *dialog = gtk_file_chooser_dialog_new(
+            _("Send File to Partner"),
+            GTK_WINDOW(toplevel),
+            GTK_FILE_CHOOSER_ACTION_OPEN,
+            _("_Cancel"), GTK_RESPONSE_CANCEL,
+            _("_Send"), GTK_RESPONSE_ACCEPT,
+            NULL
+        );
+        if (gtk_dialog_run(GTK_DIALOG(dialog)) == GTK_RESPONSE_ACCEPT) {
+            char *filename = gtk_file_chooser_get_filename(GTK_FILE_CHOOSER(dialog));
+            if (filename) {
+                uv_session_send_file(gpdata->session, filename);
+                g_free(filename);
+            }
+        }
+        gtk_widget_destroy(dialog);
+        break;
+    }
+    case UV_FEATURE_TOOL_AUDIO: {
+        gpdata->sound_muted = !gpdata->sound_muted;
+        uv_session_toggle_sound(gpdata->session, !gpdata->sound_muted);
+        break;
+    }
     case UV_FEATURE_TOOL_SENDCTRLALTDEL:
         uv_session_send_action(gpdata->session, "22");
         break;
@@ -711,10 +802,19 @@ static void remmina_plugin_ultraviewer_call_feature(RemminaProtocolWidget *gp, c
         gpdata->wallpaper_visible = !gpdata->wallpaper_visible;
         uv_session_send_action(gpdata->session, gpdata->wallpaper_visible ? "23|||-1" : "23|||0");
         break;
-    case UV_FEATURE_SCALE:
+    case UV_FEATURE_SCALE: {
+        RemminaScaleMode scale_mode = remmina_plugin_service->remmina_protocol_widget_get_current_scale_mode(gp);
+        if (scale_mode != REMMINA_PROTOCOL_WIDGET_SCALE_MODE_NONE) {
+            gtk_widget_set_size_request(GTK_WIDGET(gpdata->drawing_area), -1, -1);
+        } else {
+            int w = gpdata->remote_width > 0 ? gpdata->remote_width : remmina_plugin_service->protocol_plugin_get_width(gp);
+            int h = gpdata->remote_height > 0 ? gpdata->remote_height : remmina_plugin_service->protocol_plugin_get_height(gp);
+            gtk_widget_set_size_request(GTK_WIDGET(gpdata->drawing_area), w, h);
+        }
         remmina_plugin_service->protocol_plugin_update_align(gp);
         gtk_widget_queue_draw(gpdata->drawing_area);
         break;
+    }
     case UV_FEATURE_VIEWONLY: {
         RemminaFile *file = remmina_plugin_service->protocol_plugin_get_file(gp);
         gpdata->view_only = remmina_plugin_service->file_get_int(file, "viewonly", FALSE);
@@ -722,7 +822,16 @@ static void remmina_plugin_ultraviewer_call_feature(RemminaProtocolWidget *gp, c
     }
     case UV_FEATURE_PREF_QUALITY: {
         RemminaFile *file = remmina_plugin_service->protocol_plugin_get_file(gp);
-        int q = remmina_plugin_service->file_get_int(file, "quality", 45);
+        const char *qs = remmina_plugin_service->file_get_string(file, "quality");
+        int q = 45;
+        if (qs && *qs) {
+            q = atoi(qs);
+        } else {
+            q = remmina_plugin_service->file_get_int(file, "quality", 45);
+        }
+        if (q <= 0) q = 45;
+
+        uv_session_queue_outbound(gpdata->session, false, (const uint8_t *)"32|||2", 6);
         char q_cmd[32];
         snprintf(q_cmd, sizeof(q_cmd), "31|||%d", q);
         uv_session_queue_outbound(gpdata->session, false, (const uint8_t *)q_cmd, strlen(q_cmd));

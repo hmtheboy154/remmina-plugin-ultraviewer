@@ -8,6 +8,16 @@
 #include "uv_input.h"
 #include "uv_clipboard.h"
 #include "uv_command.h"
+#include "uv_audio.h"
+#include "uv_file_transfer.h"
+
+void uv_session_queue_outbound(UvSession *session, bool format_flag, const uint8_t *payload, size_t len)
+{
+    (void)session;
+    (void)format_flag;
+    (void)payload;
+    (void)len;
+}
 #include <assert.h>
 #include <stdio.h>
 
@@ -175,6 +185,67 @@ static void test_clipboard(void)
     printf("[✓] Clipboard encoding verified.\n");
 }
 
+static void test_audio_g722(void)
+{
+    printf("[*] Testing G.722 audio reference decoder...\n");
+
+    uint8_t input[39];
+    for (int i = 0; i <= 38; i++) input[i] = (uint8_t)i;
+    int16_t output[78];
+    size_t count = uv_g722_decode(input, 39, output, 78);
+    assert(count == 78);
+    assert(output[76] == -28446);
+
+    printf("[✓] G.722 reference decoder verified.\n");
+}
+
+static void test_shortcuts_and_clipboard_cmd5(void)
+{
+    printf("[*] Testing keyboard shortcuts (Ctrl+A/Ctrl+V) & multipart clipboard 5...\n");
+
+    /* Shortcut: Ctrl+A -> vk=0x41, scan=0x1E, ch=0 */
+    uint8_t *ctrl_a = NULL;
+    size_t ca_len = 0;
+    bool ok = uv_encode_key(GDK_KEY_a, GDK_CONTROL_MASK, true, &ctrl_a, &ca_len);
+    assert(ok && ca_len == 11);
+    assert(ctrl_a[5] == 0x41);
+    assert(uv_read_u16_le(ctrl_a + 6) == 0x1E);
+    assert(uv_read_u16_le(ctrl_a + 8) == 0); /* Suppressed character for shortcut */
+    g_free(ctrl_a);
+
+    /* Normal 'a' -> vk=0x41, scan=0x1E, ch='a' */
+    uint8_t *plain_a = NULL;
+    size_t pa_len = 0;
+    ok = uv_encode_key(GDK_KEY_a, 0, true, &plain_a, &pa_len);
+    assert(ok && pa_len == 11);
+    assert(plain_a[5] == 0x41);
+    assert(uv_read_u16_le(plain_a + 8) == 'a');
+    g_free(plain_a);
+
+    /* Command 5 multipart clipboard decode */
+    uint8_t *utf16 = NULL;
+    size_t utf16_len = 0;
+    ok = uv_utf8_to_utf16le("Hello from Partner", &utf16, &utf16_len);
+    assert(ok);
+
+    uint8_t c5 = 5;
+    UvPart parts[2] = {
+        { &c5, 1 },
+        { utf16, utf16_len }
+    };
+    GArray *arr = g_array_new(FALSE, FALSE, sizeof(UvPart));
+    g_array_append_vals(arr, parts, 2);
+
+    char *decoded_text = uv_clipboard_decode_host_to_viewer(arr);
+    assert(decoded_text != NULL);
+    assert(strcmp(decoded_text, "Hello from Partner") == 0);
+    g_free(decoded_text);
+    g_array_free(arr, TRUE);
+    g_free(utf16);
+
+    printf("[✓] Shortcuts & clipboard Command 5 verified.\n");
+}
+
 int main(void)
 {
     printf("=========================================\n");
@@ -186,6 +257,8 @@ int main(void)
     test_multipart();
     test_input_encoding();
     test_clipboard();
+    test_audio_g722();
+    test_shortcuts_and_clipboard_cmd5();
 
     printf("=========================================\n");
     printf("All Unit Tests Passed Successfully!\n");

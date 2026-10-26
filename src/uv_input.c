@@ -116,13 +116,13 @@ static const KeyTableEntry KEY_TABLE[] = {
     { GDK_KEY_BackSpace,    0x08, 0x0E, 8 },
     { GDK_KEY_Escape,       0x1B, 0x01, 27 },
 
-    /* Modifiers */
-    { GDK_KEY_Shift_L,      0x10, 0x2A, 0 },
-    { GDK_KEY_Shift_R,      0x10, 0x36, 0 },
-    { GDK_KEY_Control_L,    0x11, 0x1D, 0 },
-    { GDK_KEY_Control_R,    0x11, 0xE01D, 0 },
-    { GDK_KEY_Alt_L,        0x12, 0x38, 0 },
-    { GDK_KEY_Alt_R,        0x12, 0xE038, 0 },
+    /* Modifiers (Windows specific VK_L* / VK_R*) */
+    { GDK_KEY_Shift_L,      0xA0, 0x2A, 0 },
+    { GDK_KEY_Shift_R,      0xA1, 0x36, 0 },
+    { GDK_KEY_Control_L,    0xA2, 0x1D, 0 },
+    { GDK_KEY_Control_R,    0xA3, 0xE01D, 0 },
+    { GDK_KEY_Alt_L,        0xA4, 0x38, 0 },
+    { GDK_KEY_Alt_R,        0xA5, 0xE038, 0 },
     { GDK_KEY_Super_L,      0x5B, 0xE05B, 0 },
     { GDK_KEY_Super_R,      0x5C, 0xE05C, 0 },
     { GDK_KEY_Caps_Lock,    0x14, 0x3A, 0 },
@@ -174,6 +174,11 @@ bool uv_encode_key(guint keyval, GdkModifierType state, bool is_press,
                                           out_payload, out_len);
         }
         return false;
+    }
+
+    /* When Control, Alt, or Super is active, suppress character code to trigger host hotkeys */
+    if ((state & (GDK_CONTROL_MASK | GDK_MOD1_MASK | GDK_SUPER_MASK)) != 0 || !is_press) {
+        ch = 0;
     }
 
     bool alt_held = (state & GDK_MOD1_MASK) != 0 || (keyval == GDK_KEY_Alt_L || keyval == GDK_KEY_Alt_R);

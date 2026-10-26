@@ -34,6 +34,16 @@ static void free_outbound_msg(gpointer data)
     }
 }
 
+static void uv_session_on_file_transfer_notice(const char *message, gpointer user_data)
+{
+    UvSession *session = (UvSession *)user_data;
+    if (session && session->on_chat_received && message) {
+        char *formatted = g_strdup_printf("[File Transfer] %s", message);
+        session->on_chat_received(session, formatted, session->callback_data);
+        g_free(formatted);
+    }
+}
+
 UvSession *uv_session_new(const char *partner_id,
                           const char *partner_password,
                           const char *display_name,
@@ -65,6 +75,9 @@ UvSession *uv_session_new(const char *partner_id,
 
     session->outbound_queue = g_async_queue_new_full(free_outbound_msg);
     session->cursor_mgr = uv_cursor_manager_new();
+    session->audio = uv_audio_new();
+    session->sound_enabled = true;
+    session->ft_mgr = uv_ft_manager_new(session, uv_session_on_file_transfer_notice, session);
 
     if (pipe(session->wake_pipe) == 0) {
         int flags0 = fcntl(session->wake_pipe[0], F_GETFL, 0);
@@ -88,6 +101,14 @@ void uv_session_free(UvSession *session)
     if (session->renderer) {
         uv_screen_renderer_free(session->renderer);
         session->renderer = NULL;
+    }
+    if (session->ft_mgr) {
+        uv_ft_manager_free(session->ft_mgr);
+        session->ft_mgr = NULL;
+    }
+    if (session->audio) {
+        uv_audio_free(session->audio);
+        session->audio = NULL;
     }
     if (session->cursor_mgr) {
         uv_cursor_manager_free(session->cursor_mgr);
@@ -164,6 +185,25 @@ void uv_session_send_action(UvSession *session, const char *action_code)
         uv_session_queue_outbound(session, true, utf16, utf16_len);
         g_free(utf16);
     }
+}
+
+void uv_session_toggle_sound(UvSession *session, bool enabled)
+{
+    if (!session) return;
+    session->sound_enabled = enabled;
+    const char *req = enabled ? "46|||-1" : "46|||0";
+    uint8_t *utf16 = NULL;
+    size_t len = 0;
+    if (uv_utf8_to_utf16le(req, &utf16, &len)) {
+        uv_session_queue_outbound(session, true, utf16, len);
+        g_free(utf16);
+    }
+}
+
+bool uv_session_send_file(UvSession *session, const char *local_path)
+{
+    if (!session || !session->ft_mgr || !local_path) return false;
+    return uv_ft_send_file(session->ft_mgr, local_path);
 }
 
 static void drain_outbound_queue(UvSession *session)
@@ -303,10 +343,12 @@ static gpointer uv_session_worker(gpointer user_data)
                             case 0: { /* Screen Initialization */
                                 UvScreenInit init;
                                 if (uv_parse_screen_init(parts, &init, NULL)) {
+                                    int32_t prev_seq = session->renderer ? session->renderer->last_frame_number : UV_RESET_FRAME_NUMBER;
                                     if (session->renderer) {
                                         uv_screen_renderer_free(session->renderer);
                                     }
                                     session->renderer = uv_screen_renderer_new(&init, session->custom_dict_path);
+                                    session->renderer->last_frame_number = prev_seq;
                                     session->connected = true;
 
                                     /* Ack initialization: send ASCII "17" */
@@ -314,6 +356,16 @@ static gpointer uv_session_worker(gpointer user_data)
 
                                     /* Enable remote cursor: send "28|||1" */
                                     uv_session_queue_outbound(session, false, (const uint8_t *)"28|||1", 6);
+
+                                    /* Request remote computer sound if enabled */
+                                    if (session->sound_enabled) {
+                                        uint8_t *utf16_snd = NULL;
+                                        size_t snd_len = 0;
+                                        if (uv_utf8_to_utf16le("46|||-1", &utf16_snd, &snd_len)) {
+                                            uv_session_queue_outbound(session, true, utf16_snd, snd_len);
+                                            g_free(utf16_snd);
+                                        }
+                                    }
                                     drain_outbound_queue(session);
 
                                     if (session->on_connected) {
@@ -376,13 +428,45 @@ static gpointer uv_session_worker(gpointer user_data)
                                 uv_cursor_handle_position(session->cursor_mgr, parts, &rx, &ry);
                                 break;
                             }
-                            case 33: { /* Text clipboard */
+                            case 5:
+                            case 33: { /* Text clipboard (uncompressed 5 or zstd 33) */
                                 char *clip_text = uv_clipboard_decode_host_to_viewer(parts);
                                 if (clip_text) {
                                     if (session->on_clipboard_received) {
                                         session->on_clipboard_received(session, clip_text, session->callback_data);
                                     }
                                     g_free(clip_text);
+                                }
+                                break;
+                            }
+                            case 42: { /* Silence audio packet */
+                                if (session->sound_enabled && session->audio && parts->len >= 2) {
+                                    const UvPart *p1 = &g_array_index(parts, UvPart, 1);
+                                    if (p1->len >= 4) {
+                                        int32_t n = uv_read_i32_le(p1->data);
+                                        if (n > 0) {
+                                            uv_audio_play_silence(session->audio, (size_t)n);
+                                        }
+                                    }
+                                }
+                                break;
+                            }
+                            case 43: { /* G.722 Audio packet */
+                                if (session->sound_enabled && session->audio && parts->len >= 2) {
+                                    const UvPart *p1 = &g_array_index(parts, UvPart, 1);
+                                    if (p1->len > 0) {
+                                        uv_audio_decode_and_play(session->audio, p1->data, p1->len);
+                                    }
+                                }
+                                break;
+                            }
+                            case 13:
+                            case 14:
+                            case 15:
+                            case 16:
+                            case 21: { /* File transfer */
+                                if (session->ft_mgr) {
+                                    uv_ft_handle_parts(session->ft_mgr, parts);
                                 }
                                 break;
                             }

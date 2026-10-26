@@ -11,6 +11,7 @@ pkg_check_modules(GTK3 REQUIRED gtk+-3.0)
 pkg_check_modules(OPENSSL REQUIRED openssl)
 pkg_check_modules(ZSTD REQUIRED libzstd)
 pkg_check_modules(JPEG REQUIRED libjpeg)
+pkg_check_modules(PULSE REQUIRED libpulse-simple)
 
 find_path(REMMINA_INCLUDE_DIR remmina/plugin.h
     PATHS /usr/include /usr/local/include
@@ -28,6 +29,8 @@ set(SOURCES
     src/uv_cursor.c
     src/uv_clipboard.c
     src/uv_input.c
+    src/uv_audio.c
+    src/uv_file_transfer.c
     src/uv_session.c
     src/uv_plugin.c
 )
@@ -46,6 +49,7 @@ target_include_directories(remmina-plugin-ultraviewer PRIVATE
     ${OPENSSL_INCLUDE_DIRS}
     ${ZSTD_INCLUDE_DIRS}
     ${JPEG_INCLUDE_DIRS}
+    ${PULSE_INCLUDE_DIRS}
 )
 
 target_compile_options(remmina-plugin-ultraviewer PRIVATE
@@ -60,6 +64,7 @@ target_link_libraries(remmina-plugin-ultraviewer PRIVATE
     ${OPENSSL_LIBRARIES}
     ${ZSTD_LIBRARIES}
     ${JPEG_LIBRARIES}
+    ${PULSE_LIBRARIES}
     m
     pthread
 )
@@ -91,6 +96,8 @@ add_executable(test_ultraviewer
     src/uv_tls.c
     src/uv_input.c
     src/uv_clipboard.c
+    src/uv_audio.c
+    src/uv_file_transfer.c
     src/uv_command.c
 )
 target_include_directories(test_ultraviewer PRIVATE
@@ -98,11 +105,13 @@ target_include_directories(test_ultraviewer PRIVATE
     ${GTK3_INCLUDE_DIRS}
     ${OPENSSL_INCLUDE_DIRS}
     ${ZSTD_INCLUDE_DIRS}
+    ${PULSE_INCLUDE_DIRS}
 )
 target_link_libraries(test_ultraviewer PRIVATE
     ${GTK3_LIBRARIES}
     ${OPENSSL_LIBRARIES}
     ${ZSTD_LIBRARIES}
+    ${PULSE_LIBRARIES}
     m
     pthread
 )

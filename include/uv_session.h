@@ -20,6 +20,8 @@
 #include "uv_cursor.h"
 #include "uv_clipboard.h"
 #include "uv_input.h"
+#include "uv_audio.h"
+#include "uv_file_transfer.h"
 
 typedef struct _UvSession UvSession;
 
@@ -57,6 +59,9 @@ struct _UvSession {
     /* Subsystems */
     UvScreenRenderer *renderer;
     UvCursorManager *cursor_mgr;
+    UvAudio *audio;
+    bool sound_enabled;
+    UvFileTransferManager *ft_mgr;
 
     /* Outgoing Queue */
     GAsyncQueue *outbound_queue;
@@ -97,5 +102,9 @@ void uv_session_send_chat(UvSession *session, const char *text);
 void uv_session_send_clipboard(UvSession *session, const char *text);
 
 void uv_session_send_action(UvSession *session, const char *action_code);
+
+void uv_session_toggle_sound(UvSession *session, bool enabled);
+
+bool uv_session_send_file(UvSession *session, const char *local_path);
 
 #endif /* UV_SESSION_H */

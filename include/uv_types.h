@@ -72,4 +72,33 @@ static inline void uv_write_u32_le(uint8_t *p, uint32_t v)
     p[3] = (uint8_t)((v >> 24) & 0xFF);
 }
 
+static inline uint64_t uv_read_u64_le(const uint8_t *p)
+{
+    return ((uint64_t)p[0]) |
+           (((uint64_t)p[1]) << 8) |
+           (((uint64_t)p[2]) << 16) |
+           (((uint64_t)p[3]) << 24) |
+           (((uint64_t)p[4]) << 32) |
+           (((uint64_t)p[5]) << 40) |
+           (((uint64_t)p[6]) << 48) |
+           (((uint64_t)p[7]) << 56);
+}
+
+static inline double uv_read_f64_le(const uint8_t *p)
+{
+    union {
+        uint64_t u;
+        double f;
+    } val;
+    val.u = uv_read_u64_le(p);
+    return val.f;
+}
+
+static inline void uv_write_u64_le(uint8_t *p, uint64_t v)
+{
+    for (int i = 0; i < 8; i++) {
+        p[i] = (uint8_t)((v >> (i * 8)) & 0xFF);
+    }
+}
+
 #endif /* UV_TYPES_H */
