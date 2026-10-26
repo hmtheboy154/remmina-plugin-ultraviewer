@@ -623,7 +623,7 @@ install(FILES icons/scalable/apps/remmina-ultraviewer.svg
 ## 12. Arch Linux PKGBUILD Blueprint
 
 ```bash
-# Maintainer: Huy Minh <buingoc67@gmail.com>
+# Maintainer: hmtheboy154 <buingoc67@gmail.com>
 pkgname=remmina-plugin-ultraviewer-git
 pkgver=0.1.0.r0
 pkgrel=1

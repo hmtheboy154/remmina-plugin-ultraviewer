@@ -1,0 +1,18 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 48 48" width="48" height="48">
+  <defs>
+    <linearGradient id="uvgrad" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#FF7A00"/>
+      <stop offset="100%" stop-color="#E54300"/>
+    </linearGradient>
+  </defs>
+  <rect x="4" y="6" width="40" height="28" rx="4" fill="#2C3440" stroke="#1A202C" stroke-width="1.5"/>
+  <rect x="7" y="9" width="34" height="22" rx="2" fill="#1A202C"/>
+  <path d="M18 34 L14 42 L34 42 L30 34 Z" fill="#4A5568"/>
+  <rect x="12" y="41" width="24" height="2" rx="1" fill="#718096"/>
+  <circle cx="20" cy="20" r="7" fill="url(#uvgrad)"/>
+  <path d="M18 17 L18 21 C18 22 19 23 20 23 C21 23 22 22 22 21 L22 17" stroke="#FFFFFF" stroke-width="1.6" stroke-linecap="round" fill="none"/>
+  <!-- SSH lock badge -->
+  <circle cx="36" cy="36" r="8" fill="#3182CE"/>
+  <rect x="32" y="34" width="8" height="6" rx="1" fill="#FFFFFF"/>
+  <path d="M34 34 L34 32 C34 30.9 34.9 30 36 30 C37.1 30 38 30.9 38 32 L38 34" stroke="#FFFFFF" stroke-width="1.5" fill="none"/>
+</svg>

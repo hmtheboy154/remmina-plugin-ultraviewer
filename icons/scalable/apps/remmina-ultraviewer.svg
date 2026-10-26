@@ -1,0 +1,15 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 48 48" width="48" height="48">
+  <defs>
+    <linearGradient id="uvgrad" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#FF7A00"/>
+      <stop offset="100%" stop-color="#E54300"/>
+    </linearGradient>
+  </defs>
+  <rect x="4" y="6" width="40" height="28" rx="4" fill="#2C3440" stroke="#1A202C" stroke-width="1.5"/>
+  <rect x="7" y="9" width="34" height="22" rx="2" fill="#1A202C"/>
+  <path d="M18 34 L14 42 L34 42 L30 34 Z" fill="#4A5568"/>
+  <rect x="12" y="41" width="24" height="2" rx="1" fill="#718096"/>
+  <!-- UltraViewer badge inside display -->
+  <circle cx="24" cy="20" r="8" fill="url(#uvgrad)"/>
+  <path d="M21 17 L21 21 C21 22.5 22 23.5 24 23.5 C26 23.5 27 22.5 27 21 L27 17 M22.5 20.5 L24 23 L25.5 20.5" stroke="#FFFFFF" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" fill="none"/>
+</svg>
