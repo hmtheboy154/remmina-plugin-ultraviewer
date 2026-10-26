@@ -382,9 +382,18 @@ static gboolean on_connected_idle(gpointer user_data)
 
     remmina_plugin_service->protocol_plugin_set_width(gpdata->gp, task->width);
     remmina_plugin_service->protocol_plugin_set_height(gpdata->gp, task->height);
+
+    RemminaScaleMode scale_mode = remmina_plugin_service->remmina_protocol_widget_get_current_scale_mode(gpdata->gp);
+    if (scale_mode != REMMINA_PROTOCOL_WIDGET_SCALE_MODE_NONE) {
+        gtk_widget_set_size_request(GTK_WIDGET(gpdata->drawing_area), -1, -1);
+    } else {
+        gtk_widget_set_size_request(GTK_WIDGET(gpdata->drawing_area), task->width, task->height);
+    }
+
     remmina_plugin_service->protocol_plugin_desktop_resize(gpdata->gp);
     remmina_plugin_service->protocol_plugin_update_align(gpdata->gp);
     remmina_plugin_service->protocol_plugin_signal_connection_opened(gpdata->gp);
+    gtk_widget_queue_draw(gpdata->drawing_area);
 
     g_free(task);
     return G_SOURCE_REMOVE;
@@ -496,10 +505,17 @@ static void uv_session_chat_cb(UvSession *session, const char *text, gpointer us
 static gboolean on_closed_idle(gpointer user_data)
 {
     MarshaledTask *task = (MarshaledTask *)user_data;
-    if (task->text && *task->text) {
-        remmina_plugin_service->protocol_plugin_set_error(task->gpdata->gp, "%s", task->text);
+    RemminaPluginUltraviewerData *gpdata = task->gpdata;
+
+    if (task->text && *task->text && strcmp(task->text, "Session ended") != 0 && !gpdata->user_cancelled) {
+        remmina_plugin_service->protocol_plugin_set_error(gpdata->gp, "%s", task->text);
     }
-    remmina_plugin_service->protocol_plugin_signal_connection_closed(task->gpdata->gp);
+
+    if (!gpdata->closed) {
+        gpdata->closed = true;
+        remmina_plugin_service->protocol_plugin_signal_connection_closed(gpdata->gp);
+    }
+
     g_free(task->text);
     g_free(task);
     return G_SOURCE_REMOVE;
@@ -611,7 +627,19 @@ static gboolean remmina_plugin_ultraviewer_open_connection(RemminaProtocolWidget
         );
     }
 
-    gpdata->session = uv_session_new(server, password, username, dictpath, quality, insecure_tls, gpdata);
+    char default_user[64];
+    if (username && *username && strcmp(username, "Remmina") != 0) {
+        g_strlcpy(default_user, username, sizeof(default_user));
+    } else {
+        const char *host = g_get_host_name();
+        if (host && *host) {
+            snprintf(default_user, sizeof(default_user), "Remmina - %s", host);
+        } else {
+            snprintf(default_user, sizeof(default_user), "Remmina");
+        }
+    }
+
+    gpdata->session = uv_session_new(server, password, default_user, dictpath, quality, insecure_tls, gpdata);
 
     gpdata->session->on_connected = uv_session_connected_cb;
     gpdata->session->on_frame_ready = uv_session_frame_ready_cb;
@@ -628,6 +656,8 @@ static gboolean remmina_plugin_ultraviewer_close_connection(RemminaProtocolWidge
     RemminaPluginUltraviewerData *gpdata = GET_PLUGIN_DATA(gp);
     if (!gpdata) return FALSE;
 
+    gpdata->user_cancelled = true;
+
     if (gpdata->clipboard_handler) {
         g_signal_handler_disconnect(G_OBJECT(gtk_clipboard_get(GDK_SELECTION_CLIPBOARD)), gpdata->clipboard_handler);
         gpdata->clipboard_handler = 0;
@@ -637,7 +667,10 @@ static gboolean remmina_plugin_ultraviewer_close_connection(RemminaProtocolWidge
         uv_session_stop(gpdata->session);
     }
 
-    remmina_plugin_service->protocol_plugin_signal_connection_closed(gp);
+    if (!gpdata->closed) {
+        gpdata->closed = true;
+        remmina_plugin_service->protocol_plugin_signal_connection_closed(gp);
+    }
     return TRUE;
 }
 

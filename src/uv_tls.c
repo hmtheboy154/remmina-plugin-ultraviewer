@@ -230,6 +230,10 @@ UvTlsSocket *uv_tls_connect(const char *host, uint16_t port,
 void uv_tls_close(UvTlsSocket *sock)
 {
     if (!sock) return;
+    if (sock->fd >= 0) {
+        int flags = fcntl(sock->fd, F_GETFL, 0);
+        if (flags >= 0) fcntl(sock->fd, F_SETFL, flags | O_NONBLOCK);
+    }
     if (sock->ssl) {
         SSL_shutdown(sock->ssl);
         SSL_free(sock->ssl);

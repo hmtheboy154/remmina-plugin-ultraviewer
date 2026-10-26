@@ -15,6 +15,8 @@
 #include "uv_crypto.h"
 #include <unistd.h>
 #include <poll.h>
+#include <fcntl.h>
+#include <errno.h>
 #include <sys/socket.h>
 
 typedef struct {
@@ -43,7 +45,19 @@ UvSession *uv_session_new(const char *partner_id,
     UvSession *session = g_new0(UvSession, 1);
     g_strlcpy(session->partner_id, partner_id ? partner_id : "", sizeof(session->partner_id));
     g_strlcpy(session->partner_password, partner_password ? partner_password : "", sizeof(session->partner_password));
-    g_strlcpy(session->display_name, display_name ? display_name : "Remmina", sizeof(session->display_name));
+
+    char default_name[64];
+    if (display_name && *display_name && strcmp(display_name, "Remmina") != 0) {
+        g_strlcpy(default_name, display_name, sizeof(default_name));
+    } else {
+        const char *host = g_get_host_name();
+        if (host && *host) {
+            snprintf(default_name, sizeof(default_name), "Remmina - %s", host);
+        } else {
+            snprintf(default_name, sizeof(default_name), "Remmina");
+        }
+    }
+    g_strlcpy(session->display_name, default_name, sizeof(session->display_name));
     g_strlcpy(session->custom_dict_path, dict_path ? dict_path : "", sizeof(session->custom_dict_path));
     session->quality_preset = quality_preset > 0 ? quality_preset : 45;
     session->insecure_tls = insecure_tls;
@@ -52,7 +66,12 @@ UvSession *uv_session_new(const char *partner_id,
     session->outbound_queue = g_async_queue_new_full(free_outbound_msg);
     session->cursor_mgr = uv_cursor_manager_new();
 
-    if (pipe(session->wake_pipe) != 0) {
+    if (pipe(session->wake_pipe) == 0) {
+        int flags0 = fcntl(session->wake_pipe[0], F_GETFL, 0);
+        if (flags0 >= 0) fcntl(session->wake_pipe[0], F_SETFL, flags0 | O_NONBLOCK);
+        int flags1 = fcntl(session->wake_pipe[1], F_GETFL, 0);
+        if (flags1 >= 0) fcntl(session->wake_pipe[1], F_SETFL, flags1 | O_NONBLOCK);
+    } else {
         session->wake_pipe[0] = -1;
         session->wake_pipe[1] = -1;
     }
@@ -268,10 +287,10 @@ static gpointer uv_session_worker(gpointer user_data)
         drain_outbound_queue(session);
 
         /* Read relay socket */
-        if (pfds[0].revents & POLLIN) {
+        if ((pfds[0].revents & POLLIN) || (session->relay_sock && SSL_pending(session->relay_sock->ssl) > 0)) {
             uint8_t *payload = NULL;
             size_t payload_len = 0;
-            if (uv_tls_read_frame(session->relay_sock, &payload, &payload_len, 0, NULL)) {
+            if (uv_tls_read_frame(session->relay_sock, &payload, &payload_len, 5000, NULL)) {
                 UvEnvelope env;
                 if (uv_envelope_decode(payload, payload_len, &env)) {
                     if (env.type == UV_ENVELOPE_FORWARD && env.payload_len > 0) {
@@ -295,6 +314,7 @@ static gpointer uv_session_worker(gpointer user_data)
 
                                     /* Enable remote cursor: send "28|||1" */
                                     uv_session_queue_outbound(session, false, (const uint8_t *)"28|||1", 6);
+                                    drain_outbound_queue(session);
 
                                     if (session->on_connected) {
                                         session->on_connected(session, init.width, init.height, session->callback_data);
@@ -307,6 +327,7 @@ static gpointer uv_session_worker(gpointer user_data)
                                     if (uv_screen_apply_frame(session->renderer, parts, NULL)) {
                                         /* Ack frame: send ASCII "18" */
                                         uv_session_queue_outbound(session, false, (const uint8_t *)"18", 2);
+                                        drain_outbound_queue(session);
 
                                         if (session->on_frame_ready) {
                                             session->on_frame_ready(session, session->callback_data);
@@ -314,6 +335,7 @@ static gpointer uv_session_worker(gpointer user_data)
                                     } else {
                                         /* Decode error, still ack to maintain sequence flow */
                                         uv_session_queue_outbound(session, false, (const uint8_t *)"18", 2);
+                                        drain_outbound_queue(session);
                                     }
                                 }
                                 break;

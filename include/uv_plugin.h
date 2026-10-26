@@ -30,6 +30,8 @@ typedef struct {
     bool show_cursor;
     bool disable_clipboard;
     bool wallpaper_visible;
+    bool closed;
+    bool user_cancelled;
 
     /* Coalesced redraw */
     volatile gint redraw_pending;

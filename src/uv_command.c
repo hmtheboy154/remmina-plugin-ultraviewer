@@ -161,13 +161,17 @@ bool uv_command_register(UvTlsSocket *sock, UvClientIdentity *ident, char **err_
     g_free(reply);
 
     char **tokens = uv_split_fields(reply_str, ':', 25);
-    g_free(reply_str);
 
     if (!tokens || g_strv_length(tokens) < 11 || g_strcmp0(tokens[0], "3") != 0) {
+        if (err_msg) {
+            *err_msg = g_strdup_printf("Malformed registration reply (tokens=%u, raw='%s')",
+                                       tokens ? g_strv_length(tokens) : 0, reply_str);
+        }
         g_strfreev(tokens);
-        if (err_msg) *err_msg = g_strdup("Malformed registration reply from server");
+        g_free(reply_str);
         return false;
     }
+    g_free(reply_str);
 
     ident->public_port = (uint16_t)atoi(tokens[1]);
     /* Remove leading zeros from assigned ID */
@@ -320,7 +324,12 @@ bool uv_command_lookup(UvTlsSocket *sock, const UvClientIdentity *ident,
 static void sanitize_display_name(const char *in, char *out, size_t max_len)
 {
     if (!in || !*in) {
-        g_strlcpy(out, "Remmina", max_len);
+        const char *h = g_get_host_name();
+        if (h && *h) {
+            snprintf(out, max_len, "Remmina - %s", h);
+        } else {
+            g_strlcpy(out, "Remmina", max_len);
+        }
         return;
     }
     size_t pos = 0;
@@ -332,7 +341,12 @@ static void sanitize_display_name(const char *in, char *out, size_t max_len)
     }
     out[pos] = '\0';
     if (pos == 0) {
-        g_strlcpy(out, "Remmina", max_len);
+        const char *h = g_get_host_name();
+        if (h && *h) {
+            snprintf(out, max_len, "Remmina - %s", h);
+        } else {
+            g_strlcpy(out, "Remmina", max_len);
+        }
     }
 }
 
@@ -357,7 +371,7 @@ char *uv_create_login_message(const UvClientIdentity *ident,
     char pw_proof32[33];
     uv_md5_hex(padded_pw, pw_proof32);
 
-    char clean_name[32];
+    char clean_name[64];
     sanitize_display_name(display_name, clean_name, sizeof(clean_name));
 
     char control_str[16];
