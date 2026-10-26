@@ -1,0 +1,19 @@
+# Build artifacts
+build/
+bin/
+*.so
+*.o
+*.a
+
+# CMake generated files
+CMakeCache.txt
+CMakeFiles/
+cmake_install.cmake
+Makefile
+
+# Proprietary assets (not redistributed in git)
+assets/*.dat
+!assets/.gitkeep
+
+# Package builds
+*.pkg.tar.*
