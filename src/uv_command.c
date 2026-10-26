@@ -278,31 +278,52 @@ bool uv_command_lookup(UvTlsSocket *sock, const UvClientIdentity *ident,
     char *reply_str = g_strndup((char *)reply + 1, reply_len - 1);
     g_free(reply);
 
-    char **tokens = uv_split_fields(reply_str, ':', 30);
+    bool res = uv_parse_lookup_reply(reply_str, corr_str, out_lookup, err_msg);
     g_free(reply_str);
+    return res;
+}
+
+bool uv_parse_lookup_reply(const char *reply_str, const char *expected_corr,
+                           UvPartnerLookup *out_lookup, char **err_msg)
+{
+    if (err_msg) *err_msg = NULL;
+    if (!reply_str || !out_lookup) {
+        if (err_msg) *err_msg = g_strdup("Invalid parameters for lookup response parser");
+        return false;
+    }
+
+    memset(out_lookup, 0, sizeof(*out_lookup));
+
+    char **tokens = uv_split_fields(reply_str, ':', 0);
+    if (!tokens) {
+        if (err_msg) *err_msg = g_strdup("Malformed lookup reply from server");
+        return false;
+    }
 
     guint n_tokens = g_strv_length(tokens);
-    if (!tokens || n_tokens < 21 || g_strcmp0(tokens[0], "8") != 0) {
+    if (n_tokens < 2 || g_strcmp0(tokens[0], "8") != 0) {
         g_strfreev(tokens);
         if (err_msg) *err_msg = g_strdup("Malformed lookup reply from server");
         return false;
     }
 
-    /* Verify correlation ID (last token) */
-    if (g_strcmp0(tokens[n_tokens - 1], corr_str) != 0) {
-        g_strfreev(tokens);
-        if (err_msg) *err_msg = g_strdup("Correlation mismatch in lookup response");
-        return false;
+    /* Verify correlation ID (last token) if expected_corr is specified */
+    if (expected_corr && *expected_corr) {
+        if (n_tokens >= 3 && g_strcmp0(tokens[n_tokens - 1], expected_corr) != 0) {
+            g_strfreev(tokens);
+            if (err_msg) *err_msg = g_strdup("Correlation mismatch in lookup response");
+            return false;
+        }
     }
 
     out_lookup->status = atoi(tokens[1]);
     if (out_lookup->status == 2) {
         g_strfreev(tokens);
-        if (err_msg) *err_msg = g_strdup("UltraViewer rejected partner password");
+        if (err_msg) *err_msg = g_strdup("UltraViewer rejected partner password. Please check the password and try again.");
         return false;
     } else if (out_lookup->status == 0 || out_lookup->status == -1) {
         g_strfreev(tokens);
-        if (err_msg) *err_msg = g_strdup("Partner ID is offline");
+        if (err_msg) *err_msg = g_strdup("The partner ID is offline.");
         return false;
     } else if (out_lookup->status != 1) {
         int code = out_lookup->status;
@@ -311,11 +332,30 @@ bool uv_command_lookup(UvTlsSocket *sock, const UvClientIdentity *ident,
         return false;
     }
 
+    if (n_tokens < 15) {
+        g_strfreev(tokens);
+        if (err_msg) *err_msg = g_strdup("Incomplete lookup routing details from server");
+        return false;
+    }
+
     g_strlcpy(out_lookup->partner_ip, tokens[4], sizeof(out_lookup->partner_ip));
     out_lookup->target_port = (uint16_t)atoi(tokens[9]);
     g_strlcpy(out_lookup->relay_ip, tokens[11], sizeof(out_lookup->relay_ip));
     g_strlcpy(out_lookup->relay_hostname, tokens[14], sizeof(out_lookup->relay_hostname));
-    g_strlcpy(out_lookup->secret_token, tokens[20], sizeof(out_lookup->secret_token));
+    if (n_tokens > 20) {
+        g_strlcpy(out_lookup->secret_token, tokens[20], sizeof(out_lookup->secret_token));
+    }
+
+    if (tokens[8] && *tokens[8]) {
+        gsize dlen = 0;
+        guchar *dec = g_base64_decode(tokens[8], &dlen);
+        if (dec) {
+            size_t copylen = MIN(dlen, sizeof(out_lookup->partner_name) - 1);
+            memcpy(out_lookup->partner_name, dec, copylen);
+            out_lookup->partner_name[copylen] = '\0';
+            g_free(dec);
+        }
+    }
 
     g_strfreev(tokens);
     return true;

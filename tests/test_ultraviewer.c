@@ -311,6 +311,91 @@ static void test_cursor_handling(void)
     printf("[✓] Cursor handling and position decoding verified.\n");
 }
 
+static void test_lookup_reply_parsing(void)
+{
+    UvPartnerLookup lookup;
+    char *err_msg = NULL;
+
+    /* 1. Success vector */
+    const char *ok_vector = "8:1:192.0.2.9:unused:203.0.113.9:54000:5900:5901:TmFtZQ==:55100:unused:198.51.100.2:-1:123:relay.example:x:x:x:x:x:secret:direct-info:42";
+    bool ok = uv_parse_lookup_reply(ok_vector, "42", &lookup, &err_msg);
+    assert(ok);
+    assert(lookup.status == 1);
+    assert(strcmp(lookup.partner_ip, "203.0.113.9") == 0);
+    assert(lookup.target_port == 55100);
+    assert(strcmp(lookup.relay_ip, "198.51.100.2") == 0);
+    assert(strcmp(lookup.relay_hostname, "relay.example") == 0);
+    assert(strcmp(lookup.secret_token, "secret") == 0);
+    assert(strcmp(lookup.partner_name, "Name") == 0);
+    assert(err_msg == NULL);
+
+    /* 2. Wrong partner password vector (status 2, only 3 tokens) */
+    const char *wrong_pw_vector = "8:2:42";
+    ok = uv_parse_lookup_reply(wrong_pw_vector, "42", &lookup, &err_msg);
+    assert(!ok);
+    assert(lookup.status == 2);
+    assert(err_msg != NULL);
+    assert(strstr(err_msg, "rejected partner password") != NULL);
+    g_free(err_msg);
+    err_msg = NULL;
+
+    /* 3. Partner offline vector (status 0) */
+    const char *offline_vector = "8:0:42";
+    ok = uv_parse_lookup_reply(offline_vector, "42", &lookup, &err_msg);
+    assert(!ok);
+    assert(lookup.status == 0);
+    assert(err_msg != NULL);
+    assert(strstr(err_msg, "offline") != NULL);
+    g_free(err_msg);
+    err_msg = NULL;
+
+    /* 4. Partner offline vector (status -1) */
+    const char *offline_neg_vector = "8:-1:42";
+    ok = uv_parse_lookup_reply(offline_neg_vector, "42", &lookup, &err_msg);
+    assert(!ok);
+    assert(lookup.status == -1);
+    assert(err_msg != NULL);
+    assert(strstr(err_msg, "offline") != NULL);
+    g_free(err_msg);
+    err_msg = NULL;
+
+    /* 5. Custom decline code vector (status 5) */
+    const char *decline_vector = "8:5:42";
+    ok = uv_parse_lookup_reply(decline_vector, "42", &lookup, &err_msg);
+    assert(!ok);
+    assert(lookup.status == 5);
+    assert(err_msg != NULL);
+    assert(strstr(err_msg, "code 5") != NULL);
+    g_free(err_msg);
+    err_msg = NULL;
+
+    /* 6. Correlation mismatch vector */
+    ok = uv_parse_lookup_reply("8:2:999", "42", &lookup, &err_msg);
+    assert(!ok);
+    assert(err_msg != NULL);
+    assert(strstr(err_msg, "Correlation mismatch") != NULL);
+    g_free(err_msg);
+    err_msg = NULL;
+
+    /* 7. Malformed reply */
+    ok = uv_parse_lookup_reply("3:1:42", "42", &lookup, &err_msg);
+    assert(!ok);
+    assert(err_msg != NULL);
+    assert(strstr(err_msg, "Malformed lookup reply") != NULL);
+    g_free(err_msg);
+    err_msg = NULL;
+
+    /* 8. Incomplete status 1 reply (< 15 tokens) */
+    ok = uv_parse_lookup_reply("8:1:192.0.2.9:42", "42", &lookup, &err_msg);
+    assert(!ok);
+    assert(err_msg != NULL);
+    assert(strstr(err_msg, "Incomplete lookup routing details") != NULL);
+    g_free(err_msg);
+    err_msg = NULL;
+
+    printf("[✓] Lookup reply parsing and error reporting verified.\n");
+}
+
 int main(void)
 {
     printf("=========================================\n");
@@ -325,6 +410,7 @@ int main(void)
     test_audio_g722();
     test_shortcuts_and_clipboard_cmd5();
     test_cursor_handling();
+    test_lookup_reply_parsing();
 
     printf("=========================================\n");
     printf("All Unit Tests Passed Successfully!\n");

@@ -44,6 +44,9 @@ bool uv_command_lookup(UvTlsSocket *sock, const UvClientIdentity *ident,
                        const char *target_id, const char *target_password,
                        UvPartnerLookup *out_lookup, char **err_msg);
 
+bool uv_parse_lookup_reply(const char *reply_str, const char *expected_corr,
+                           UvPartnerLookup *out_lookup, char **err_msg);
+
 char *uv_create_login_message(const UvClientIdentity *ident,
                               const UvPartnerLookup *lookup,
                               const char *partner_password,
