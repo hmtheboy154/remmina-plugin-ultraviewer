@@ -266,10 +266,28 @@ static gpointer uv_session_worker(gpointer user_data)
         return NULL;
     }
 
-    /* 3. Partner Lookup */
-    if (!uv_command_lookup(session->cmd_sock, &session->client_ident,
-                           session->partner_id, session->partner_password,
-                           &session->partner_lookup, &err_msg)) {
+    /* 3. Partner Lookup with password retry */
+    int auth_attempts = 0;
+    while (auth_attempts < 3) {
+        auth_attempts++;
+        if (uv_command_lookup(session->cmd_sock, &session->client_ident,
+                               session->partner_id, session->partner_password,
+                               &session->partner_lookup, &err_msg)) {
+            break;
+        }
+
+        /* Check if error was rejected password (status 2) and prompt user for retry */
+        if (session->partner_lookup.status == 2 && session->on_auth_request) {
+            g_free(err_msg);
+            err_msg = NULL;
+            char *retry_pwd = NULL;
+            if (session->on_auth_request(session, &retry_pwd, session->callback_data) && retry_pwd) {
+                g_strlcpy(session->partner_password, retry_pwd, sizeof(session->partner_password));
+                g_free(retry_pwd);
+                continue;
+            }
+        }
+
         if (session->on_closed) session->on_closed(session, err_msg, session->callback_data);
         g_free(err_msg);
         return NULL;

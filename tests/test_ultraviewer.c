@@ -437,6 +437,31 @@ static void test_screen_reinit(void)
     printf("[✓] Screen reinitialization verified.\n");
 }
 
+static bool mock_auth_request_cb(UvSession *session, char **out_new_password, gpointer user_data)
+{
+    (void)session;
+    int *called = (int *)user_data;
+    (*called)++;
+    *out_new_password = g_strdup("correct_password");
+    return true;
+}
+
+static void test_auth_retry_callback(void)
+{
+    printf("[*] Testing auth retry request callback...\n");
+
+    int called = 0;
+    char *new_pwd = NULL;
+    bool ok = mock_auth_request_cb(NULL, &new_pwd, &called);
+    assert(ok);
+    assert(called == 1);
+    assert(new_pwd != NULL);
+    assert(strcmp(new_pwd, "correct_password") == 0);
+    g_free(new_pwd);
+
+    printf("[✓] Auth retry request callback verified.\n");
+}
+
 int main(void)
 {
     printf("=========================================\n");
@@ -453,6 +478,7 @@ int main(void)
     test_cursor_handling();
     test_lookup_reply_parsing();
     test_screen_reinit();
+    test_auth_retry_callback();
 
     printf("=========================================\n");
     printf("All Unit Tests Passed Successfully!\n");

@@ -32,6 +32,7 @@ typedef void (*UvSessionCursorPositionCb)(UvSession *session, int16_t x, int16_t
 typedef void (*UvSessionClipboardCb)(UvSession *session, const char *text, gpointer user_data);
 typedef void (*UvSessionChatCb)(UvSession *session, const char *text, gpointer user_data);
 typedef void (*UvSessionClosedCb)(UvSession *session, const char *error_msg, gpointer user_data);
+typedef bool (*UvSessionAuthRequestCb)(UvSession *session, char **out_new_password, gpointer user_data);
 
 struct _UvSession {
     /* Credentials & Connection Params */
@@ -81,6 +82,7 @@ struct _UvSession {
     UvSessionClipboardCb on_clipboard_received;
     UvSessionChatCb on_chat_received;
     UvSessionClosedCb on_closed;
+    UvSessionAuthRequestCb on_auth_request;
     gpointer callback_data;
 };
 

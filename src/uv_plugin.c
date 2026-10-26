@@ -661,6 +661,47 @@ static void uv_session_closed_cb(UvSession *session, const char *error_msg, gpoi
     g_idle_add(on_closed_idle, task);
 }
 
+static bool uv_session_auth_request_cb(UvSession *session, char **out_new_password, gpointer user_data)
+{
+    (void)session;
+    RemminaPluginUltraviewerData *gpdata = (RemminaPluginUltraviewerData *)user_data;
+    if (!gpdata || !gpdata->gp) return false;
+
+    RemminaFile *file = remmina_plugin_service->protocol_plugin_get_file(gpdata->gp);
+    gboolean disablepasswordstoring = remmina_plugin_service->file_get_int(file, "disablepasswordstoring", FALSE);
+
+    /* Clear incorrect password in file */
+    remmina_plugin_service->file_set_string(file, "password", NULL);
+
+    gint ret = remmina_plugin_service->protocol_plugin_init_auth(
+        gpdata->gp,
+        (disablepasswordstoring ? 0 : REMMINA_MESSAGE_PANEL_FLAG_SAVEPASSWORD),
+        _("UltraViewer Authentication Failed"),
+        NULL,
+        NULL,
+        NULL,
+        _("Password was incorrect. Please re-enter:")
+    );
+
+    if (ret != GTK_RESPONSE_OK) {
+        return false;
+    }
+
+    char *new_pwd = remmina_plugin_service->protocol_plugin_init_get_password(gpdata->gp);
+    if (!new_pwd || !*new_pwd) {
+        g_free(new_pwd);
+        return false;
+    }
+
+    gboolean save = remmina_plugin_service->protocol_plugin_init_get_savepassword(gpdata->gp);
+    if (save) {
+        remmina_plugin_service->file_set_string(file, "password", new_pwd);
+    }
+
+    *out_new_password = new_pwd;
+    return true;
+}
+
 static void remmina_plugin_ultraviewer_free(RemminaPluginUltraviewerData *gpdata)
 {
     if (!gpdata) return;
@@ -768,13 +809,50 @@ static gboolean remmina_plugin_ultraviewer_open_connection(RemminaProtocolWidget
     gboolean insecure_tls = remmina_plugin_service->file_get_int(file, "insecure_tls", FALSE);
     gboolean viewonly = remmina_plugin_service->file_get_int(file, "viewonly", FALSE);
 
-    if (!server || !*server) {
+    char clean_server[64];
+    size_t sidx = 0;
+    if (server) {
+        for (const char *p = server; *p && sidx < sizeof(clean_server) - 1; p++) {
+            if (!g_ascii_isspace(*p)) {
+                clean_server[sidx++] = *p;
+            }
+        }
+    }
+    clean_server[sidx] = '\0';
+
+    if (clean_server[0] == '\0') {
         remmina_plugin_service->protocol_plugin_set_error(gp, "%s", _("Partner ID is required"));
         return FALSE;
     }
+
+    char *auth_pwd = NULL;
     if (!password || !*password) {
-        remmina_plugin_service->protocol_plugin_set_error(gp, "%s", _("Password is required"));
-        return FALSE;
+        gboolean disablepasswordstoring = remmina_plugin_service->file_get_int(file, "disablepasswordstoring", FALSE);
+        gint ret = remmina_plugin_service->protocol_plugin_init_auth(
+            gp,
+            (disablepasswordstoring ? 0 : REMMINA_MESSAGE_PANEL_FLAG_SAVEPASSWORD),
+            _("UltraViewer Authentication"),
+            NULL,
+            NULL,
+            NULL,
+            _("Enter UltraViewer Password")
+        );
+        if (ret != GTK_RESPONSE_OK) {
+            return FALSE;
+        }
+        auth_pwd = remmina_plugin_service->protocol_plugin_init_get_password(gp);
+        if (!auth_pwd || !*auth_pwd) {
+            g_free(auth_pwd);
+            remmina_plugin_service->protocol_plugin_set_error(gp, "%s", _("Password is required"));
+            return FALSE;
+        }
+        gboolean save = remmina_plugin_service->protocol_plugin_init_get_savepassword(gp);
+        if (save) {
+            remmina_plugin_service->file_set_string(file, "password", auth_pwd);
+        } else {
+            remmina_plugin_service->file_set_string(file, "password", NULL);
+        }
+        password = auth_pwd;
     }
 
     int scale_val = remmina_plugin_service->file_get_int(file, "scale", -1);
@@ -810,7 +888,8 @@ static gboolean remmina_plugin_ultraviewer_open_connection(RemminaProtocolWidget
         }
     }
 
-    gpdata->session = uv_session_new(server, password, default_user, dictpath, quality, insecure_tls, gpdata);
+    gpdata->session = uv_session_new(clean_server, password, default_user, dictpath, quality, insecure_tls, gpdata);
+    g_free(auth_pwd);
     gpdata->session->sound_enabled = !disablesound;
     gpdata->session->show_cursor = gpdata->show_cursor;
 
@@ -821,6 +900,7 @@ static gboolean remmina_plugin_ultraviewer_open_connection(RemminaProtocolWidget
     gpdata->session->on_clipboard_received = uv_session_clipboard_cb;
     gpdata->session->on_chat_received = uv_session_chat_cb;
     gpdata->session->on_closed = uv_session_closed_cb;
+    gpdata->session->on_auth_request = uv_session_auth_request_cb;
 
     return uv_session_start(gpdata->session);
 }
@@ -999,12 +1079,89 @@ static void remmina_plugin_ultraviewer_send_keystrokes(RemminaProtocolWidget *gp
         gpdata->drawing_area, keystrokes, keylen, GDK_KEY_PRESS | GDK_KEY_RELEASE);
 }
 
+static void find_and_inject_quick_connect(GtkWidget *widget, gpointer data)
+{
+    gboolean *found = (gboolean *)data;
+    if (!widget || *found) return;
+
+    if (GTK_IS_COMBO_BOX_TEXT(widget)) {
+        const gchar *bname = gtk_buildable_get_name(GTK_BUILDABLE(widget));
+        if (g_strcmp0(bname, "combo_quick_connect_protocol") == 0) {
+            GtkTreeModel *model = gtk_combo_box_get_model(GTK_COMBO_BOX(widget));
+            GtkTreeIter iter;
+            gboolean exists = FALSE;
+            if (model && gtk_tree_model_get_iter_first(model, &iter)) {
+                do {
+                    gchar *str = NULL;
+                    gtk_tree_model_get(model, &iter, 0, &str, -1);
+                    if (g_strcmp0(str, "ULTRAVIEWER") == 0) {
+                        exists = TRUE;
+                        g_free(str);
+                        break;
+                    }
+                    g_free(str);
+                } while (gtk_tree_model_iter_next(model, &iter));
+            }
+            if (!exists) {
+                gtk_combo_box_text_append(GTK_COMBO_BOX_TEXT(widget), "ULTRAVIEWER", "ULTRAVIEWER");
+            }
+            *found = TRUE;
+            return;
+        }
+    }
+
+    if (GTK_IS_CONTAINER(widget)) {
+        gtk_container_forall(GTK_CONTAINER(widget), find_and_inject_quick_connect, data);
+    }
+}
+
+static gboolean inject_quick_connect_timer(gpointer user_data)
+{
+    int *tries = (int *)user_data;
+    if (!tries) return G_SOURCE_REMOVE;
+    (*tries)++;
+
+    GList *toplevels = gtk_window_list_toplevels();
+    gboolean found = FALSE;
+    for (GList *l = toplevels; l; l = l->next) {
+        GtkWidget *win = GTK_WIDGET(l->data);
+        if (GTK_IS_WINDOW(win)) {
+            find_and_inject_quick_connect(win, &found);
+            if (found) break;
+        }
+    }
+    g_list_free(toplevels);
+
+    if (found || *tries >= 60) {
+        g_free(tries);
+        return G_SOURCE_REMOVE;
+    }
+    return G_SOURCE_CONTINUE;
+}
+
+static void on_screen_window_added(GdkScreen *screen, GdkWindow *window, gpointer user_data)
+{
+    (void)screen;
+    (void)window;
+    (void)user_data;
+    GList *toplevels = gtk_window_list_toplevels();
+    gboolean found = FALSE;
+    for (GList *l = toplevels; l; l = l->next) {
+        GtkWidget *win = GTK_WIDGET(l->data);
+        if (GTK_IS_WINDOW(win)) {
+            find_and_inject_quick_connect(win, &found);
+            if (found) break;
+        }
+    }
+    g_list_free(toplevels);
+}
+
 static RemminaProtocolPlugin remmina_plugin_ultraviewer = {
     .type = REMMINA_PLUGIN_TYPE_PROTOCOL,
     .name = "ULTRAVIEWER",
     .description = "UltraViewer - Remote Desktop Client Plugin",
     .domain = "remmina-plugin-ultraviewer",
-    .version = "0.1.0",
+    .version = "0.2.0",
     .icon_name = "remmina-ultraviewer",
     .icon_name_ssh = "remmina-ultraviewer-ssh",
     .basic_settings = remmina_plugin_ultraviewer_basic_settings,
@@ -1025,5 +1182,14 @@ static RemminaProtocolPlugin remmina_plugin_ultraviewer = {
 G_MODULE_EXPORT gboolean remmina_plugin_entry(RemminaPluginService *service)
 {
     remmina_plugin_service = service;
-    return service->register_plugin((RemminaPlugin *)&remmina_plugin_ultraviewer);
+    gboolean ok = service->register_plugin((RemminaPlugin *)&remmina_plugin_ultraviewer);
+    if (ok) {
+        GdkScreen *screen = gdk_screen_get_default();
+        if (screen) {
+            g_signal_connect(screen, "window-added", G_CALLBACK(on_screen_window_added), NULL);
+        }
+        int *tries = g_new0(int, 1);
+        g_timeout_add(250, inject_quick_connect_timer, tries);
+    }
+    return ok;
 }
