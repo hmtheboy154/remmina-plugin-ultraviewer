@@ -28,6 +28,7 @@ typedef struct _UvSession UvSession;
 typedef void (*UvSessionConnectedCb)(UvSession *session, int width, int height, gpointer user_data);
 typedef void (*UvSessionFrameReadyCb)(UvSession *session, gpointer user_data);
 typedef void (*UvSessionCursorChangeCb)(UvSession *session, GdkCursor *cursor, gpointer user_data);
+typedef void (*UvSessionCursorPositionCb)(UvSession *session, int16_t x, int16_t y, gpointer user_data);
 typedef void (*UvSessionClipboardCb)(UvSession *session, const char *text, gpointer user_data);
 typedef void (*UvSessionChatCb)(UvSession *session, const char *text, gpointer user_data);
 typedef void (*UvSessionClosedCb)(UvSession *session, const char *error_msg, gpointer user_data);
@@ -75,6 +76,7 @@ struct _UvSession {
     UvSessionConnectedCb on_connected;
     UvSessionFrameReadyCb on_frame_ready;
     UvSessionCursorChangeCb on_cursor_change;
+    UvSessionCursorPositionCb on_cursor_position;
     UvSessionClipboardCb on_clipboard_received;
     UvSessionChatCb on_chat_received;
     UvSessionClosedCb on_closed;

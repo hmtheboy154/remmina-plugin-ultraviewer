@@ -14,18 +14,26 @@
 #include "uv_wire.h"
 #include <gdk-pixbuf/gdk-pixbuf.h>
 #include <zstd.h>
+#include <string.h>
 
-static void free_gdk_cursor(gpointer data)
+static void free_cursor_item(gpointer data)
 {
     if (data) {
-        g_object_unref(G_OBJECT(data));
+        UvCursorItem *item = (UvCursorItem *)data;
+        if (item->cursor) {
+            g_object_unref(item->cursor);
+        }
+        if (item->surface) {
+            cairo_surface_destroy(item->surface);
+        }
+        g_free(item);
     }
 }
 
 UvCursorManager *uv_cursor_manager_new(void)
 {
     UvCursorManager *mgr = g_new0(UvCursorManager, 1);
-    mgr->cache = g_hash_table_new_full(g_direct_hash, g_direct_equal, NULL, free_gdk_cursor);
+    mgr->cache = g_hash_table_new_full(g_direct_hash, g_direct_equal, NULL, free_cursor_item);
     g_mutex_init(&mgr->mutex);
     return mgr;
 }
@@ -33,15 +41,211 @@ UvCursorManager *uv_cursor_manager_new(void)
 void uv_cursor_manager_free(UvCursorManager *mgr)
 {
     if (!mgr) return;
-    if (mgr->current_cursor) {
-        g_object_unref(mgr->current_cursor);
-    }
     g_hash_table_destroy(mgr->cache);
     g_mutex_clear(&mgr->mutex);
     g_free(mgr);
 }
 
-static GdkCursor *decode_cur_file(const uint8_t *data, size_t len)
+static UvCursorItem *create_default_arrow_item(void)
+{
+    static const char *rows[16] = {
+        "X..........", "XX.........", "XOX........", "XOOX.......", "XOOOX......", "XOOOOX.....",
+        "XOOOOOX....", "XOOOOOOX...", "XOOOOOOOX..", "XOOOOOOOOX.", "XOOOOOXXXXX", "XOOXOOX....",
+        "XOX.XOOX...", "XX..XOOX...", "X....XOOX..", ".....XXX...",
+    };
+    int w = 11, h = 16;
+    cairo_surface_t *surf = cairo_image_surface_create(CAIRO_FORMAT_ARGB32, w, h);
+    uint32_t *dst = (uint32_t *)cairo_image_surface_get_data(surf);
+    int stride = cairo_image_surface_get_stride(surf) / 4;
+
+    for (int y = 0; y < h; y++) {
+        for (int x = 0; x < w; x++) {
+            char c = rows[y][x];
+            uint32_t px = 0;
+            if (c == 'X') px = 0xFF000000;
+            else if (c == 'O') px = 0xFFFFFFFF;
+            dst[y * stride + x] = px;
+        }
+    }
+    cairo_surface_mark_dirty(surf);
+
+    GdkDisplay *display = gdk_display_get_default();
+    if (!display) {
+        cairo_surface_destroy(surf);
+        return NULL;
+    }
+
+    GdkCursor *cur = gdk_cursor_new_from_surface(display, surf, 0.0, 0.0);
+    if (!cur) {
+        cairo_surface_destroy(surf);
+        return NULL;
+    }
+
+    UvCursorItem *item = g_new0(UvCursorItem, 1);
+    item->cursor = cur;
+    item->surface = surf;
+    item->hot_x = 0;
+    item->hot_y = 0;
+    return item;
+}
+
+static cairo_surface_t *decode_dib_to_surface(const uint8_t *b, size_t len,
+                                              int width, int height)
+{
+    if (len < 16) return NULL;
+    uint32_t header = uv_read_u32_le(b);
+    if (header != 12 && header != 40 && header != 52 && header != 56 && header != 108 && header != 124) {
+        return NULL;
+    }
+    if (header > len) return NULL;
+
+    bool core = (header == 12);
+    int bits = core ? uv_read_u16_le(b + 10) : uv_read_u16_le(b + 14);
+    if (bits != 1 && bits != 4 && bits != 8 && bits != 16 && bits != 24 && bits != 32) {
+        return NULL;
+    }
+    if (!core && len < 40) return NULL;
+
+    bool top_down = !core && (uv_read_i32_le(b + 8) < 0);
+    size_t declared = core ? 0 : uv_read_u32_le(b + 32);
+    size_t colors = 0;
+    if (bits <= 8) {
+        colors = (declared == 0) ? (1U << bits) : declared;
+        if (colors > (1U << bits)) return NULL;
+    } else {
+        if (declared > 256) return NULL;
+        colors = declared;
+    }
+
+    size_t pal_stride = core ? 3 : 4;
+    size_t px_off = header + colors * pal_stride;
+    size_t stride = ((width * bits + 31) / 32) * 4;
+    size_t mask_stride = ((width + 31) / 32) * 4;
+    size_t mask_off = px_off + stride * height;
+
+    if (px_off > len || mask_off > len || mask_stride * height > len - mask_off) {
+        return NULL;
+    }
+
+    bool uses_alpha = false;
+    if (bits == 32) {
+        for (int r = 0; r < height; r++) {
+            for (int x = 0; x < width; x++) {
+                if (b[px_off + r * stride + x * 4 + 3] != 0) {
+                    uses_alpha = true;
+                    break;
+                }
+            }
+            if (uses_alpha) break;
+        }
+    }
+
+    uint32_t *pixels = g_malloc0(sizeof(uint32_t) * width * height);
+    bool *inverted = g_malloc0(sizeof(bool) * width * height);
+
+    for (int y = 0; y < height; y++) {
+        int sy = top_down ? y : (height - 1 - y);
+        size_t row = px_off + sy * stride;
+        size_t mrow = mask_off + sy * mask_stride;
+
+        for (int x = 0; x < width; x++) {
+            uint8_t bl = 0, g = 0, r = 0, a = 255;
+
+            switch (bits) {
+            case 1:
+            case 4:
+            case 8: {
+                size_t i = 0;
+                if (bits == 1) {
+                    i = (b[row + x / 8] >> (7 - (x % 8))) & 1;
+                } else if (bits == 4) {
+                    i = (b[row + x / 2] >> ((x % 2 == 0) ? 4 : 0)) & 0x0F;
+                } else {
+                    i = b[row + x];
+                }
+                if (i >= colors) {
+                    g_free(pixels);
+                    g_free(inverted);
+                    return NULL;
+                }
+                size_t e = header + i * pal_stride;
+                bl = b[e];
+                g = b[e + 1];
+                r = b[e + 2];
+                break;
+            }
+            case 16: {
+                uint16_t v = uv_read_u16_le(b + row + x * 2);
+                bl = ((v & 0x1F) << 3) | ((v & 0x1F) >> 2);
+                g = (((v >> 5) & 0x1F) << 3) | (((v >> 5) & 0x1F) >> 2);
+                r = (((v >> 10) & 0x1F) << 3) | (((v >> 10) & 0x1F) >> 2);
+                break;
+            }
+            case 24: {
+                size_t o = row + x * 3;
+                bl = b[o];
+                g = b[o + 1];
+                r = b[o + 2];
+                break;
+            }
+            case 32: {
+                size_t o = row + x * 4;
+                bl = b[o];
+                g = b[o + 1];
+                r = b[o + 2];
+                if (uses_alpha) a = b[o + 3];
+                break;
+            }
+            }
+
+            if (!uses_alpha && (b[mrow + x / 8] & (0x80 >> (x % 8))) != 0) {
+                if (bl != 0 || g != 0 || r != 0) {
+                    inverted[y * width + x] = true;
+                    continue;
+                }
+                a = 0;
+            }
+
+            pixels[y * width + x] = (a == 0) ? 0 :
+                (((uint32_t)a << 24) | ((uint32_t)r << 16) | ((uint32_t)g << 8) | bl);
+        }
+    }
+
+    /* Process inverted pixels (composite with white & black outline) */
+    for (int y = 0; y < height; y++) {
+        for (int x = 0; x < width; x++) {
+            if (!inverted[y * width + x]) continue;
+            pixels[y * width + x] = 0xFFFFFFFF;
+            static const int dxs[4] = { -1, 1, 0, 0 };
+            static const int dys[4] = { 0, 0, -1, 1 };
+            for (int d = 0; d < 4; d++) {
+                int nx = x + dxs[d];
+                int ny = y + dys[d];
+                if (nx >= 0 && ny >= 0 && nx < width && ny < height) {
+                    int n = ny * width + nx;
+                    if (!inverted[n] && pixels[n] == 0) {
+                        pixels[n] = 0xFF000000;
+                    }
+                }
+            }
+        }
+    }
+    g_free(inverted);
+
+    cairo_surface_t *surf = cairo_image_surface_create(CAIRO_FORMAT_ARGB32, width, height);
+    uint32_t *dst = (uint32_t *)cairo_image_surface_get_data(surf);
+    int surf_stride = cairo_image_surface_get_stride(surf) / 4;
+
+    for (int y = 0; y < height; y++) {
+        memcpy(dst + y * surf_stride, pixels + y * width, width * sizeof(uint32_t));
+    }
+    cairo_surface_mark_dirty(surf);
+    g_free(pixels);
+
+    return surf;
+}
+
+static UvCursorItem *decode_cur_file(const uint8_t *data, size_t len)
 {
     if (!data || len < 22) return NULL;
 
@@ -50,8 +254,8 @@ static GdkCursor *decode_cur_file(const uint8_t *data, size_t len)
     uint16_t count = uv_read_u16_le(data + 4);
     if (count == 0 || 6 + (size_t)count * 16 > len) return NULL;
 
-    (void)data[6]; /* width */
-    (void)data[7]; /* height */
+    int width = (data[6] == 0) ? 256 : data[6];
+    int height = (data[7] == 0) ? 256 : data[7];
     uint16_t hot_x = uv_read_u16_le(data + 10);
     uint16_t hot_y = uv_read_u16_le(data + 12);
     uint32_t res_size = uv_read_u32_le(data + 14);
@@ -76,38 +280,13 @@ static GdkCursor *decode_cur_file(const uint8_t *data, size_t len)
             }
             g_object_unref(loader);
         }
-    } else if (res_size >= 40) {
-        /* Standard Windows DIB Header: BITMAPINFOHEADER */
-        uint32_t bi_size = uv_read_u32_le(res);
-        if (bi_size == 40) {
-            int32_t bi_width = uv_read_i32_le(res + 4);
-            int32_t bi_height = uv_read_i32_le(res + 8) / 2; /* In CUR, biHeight is 2x icon height */
-            uint16_t bi_bitcount = uv_read_u16_le(res + 14);
-
-            if (bi_width > 0 && bi_height > 0 && bi_bitcount == 32) {
-                surface = cairo_image_surface_create(CAIRO_FORMAT_ARGB32, bi_width, bi_height);
-                uint32_t *surf_data = (uint32_t *)cairo_image_surface_get_data(surface);
-                int stride_dwords = cairo_image_surface_get_stride(surface) / 4;
-
-                const uint8_t *src_pixels = res + 40;
-                /* DIB rows are bottom-up, 32bpp BGRA */
-                for (int y = 0; y < bi_height; y++) {
-                    const uint8_t *src_row = src_pixels + (size_t)(bi_height - 1 - y) * (size_t)bi_width * 4;
-                    uint32_t *dst_row = surf_data + (size_t)y * (size_t)stride_dwords;
-                    for (int x = 0; x < bi_width; x++) {
-                        uint8_t b = src_row[x * 4];
-                        uint8_t g = src_row[x * 4 + 1];
-                        uint8_t r = src_row[x * 4 + 2];
-                        uint8_t a = src_row[x * 4 + 3];
-                        dst_row[x] = ((uint32_t)a << 24) | ((uint32_t)r << 16) | ((uint32_t)g << 8) | b;
-                    }
-                }
-                cairo_surface_mark_dirty(surface);
-            }
-        }
+    } else {
+        surface = decode_dib_to_surface(res, res_size, width, height);
     }
 
-    if (!surface) return NULL;
+    if (!surface) {
+        return create_default_arrow_item();
+    }
 
     GdkDisplay *display = gdk_display_get_default();
     if (!display) {
@@ -116,12 +295,24 @@ static GdkCursor *decode_cur_file(const uint8_t *data, size_t len)
     }
 
     GdkCursor *cursor = gdk_cursor_new_from_surface(display, surface, (double)hot_x, (double)hot_y);
-    cairo_surface_destroy(surface);
-    return cursor;
+    if (!cursor) {
+        cairo_surface_destroy(surface);
+        return NULL;
+    }
+
+    UvCursorItem *item = g_new0(UvCursorItem, 1);
+    item->cursor = cursor;
+    item->surface = surface;
+    item->hot_x = (int)hot_x;
+    item->hot_y = (int)hot_y;
+    return item;
 }
 
-bool uv_cursor_handle_selection(UvCursorManager *mgr, const GArray *parts, GdkCursor **out_cursor)
+bool uv_cursor_handle_selection(UvCursorManager *mgr, const GArray *parts,
+                                GdkCursor **out_cursor, int32_t *out_missing_hash)
 {
+    if (out_cursor) *out_cursor = NULL;
+    if (out_missing_hash) *out_missing_hash = 0;
     if (!mgr || !parts || parts->len < 2) return false;
 
     const UvPart *p1 = &g_array_index(parts, UvPart, 1);
@@ -133,20 +324,28 @@ bool uv_cursor_handle_selection(UvCursorManager *mgr, const GArray *parts, GdkCu
     }
 
     g_mutex_lock(&mgr->mutex);
-    GdkCursor *cur = g_hash_table_lookup(mgr->cache, GINT_TO_POINTER(hash));
-    if (cur) {
+    UvCursorItem *item = g_hash_table_lookup(mgr->cache, GINT_TO_POINTER(hash));
+    if (item) {
         mgr->current_hash = hash;
-        if (mgr->current_cursor) g_object_unref(mgr->current_cursor);
-        mgr->current_cursor = g_object_ref(cur);
-        if (out_cursor) *out_cursor = g_object_ref(cur);
+        mgr->current_item = item;
+        if (out_cursor && item->cursor) {
+            *out_cursor = g_object_ref(item->cursor);
+        }
+        g_mutex_unlock(&mgr->mutex);
+        return true;
+    }
+
+    if (out_missing_hash) {
+        *out_missing_hash = hash;
     }
     g_mutex_unlock(&mgr->mutex);
-
-    return (cur != NULL);
+    return false;
 }
 
-bool uv_cursor_handle_shape_transfer(UvCursorManager *mgr, const GArray *parts, GdkCursor **out_cursor)
+bool uv_cursor_handle_shape_transfer(UvCursorManager *mgr, const GArray *parts,
+                                     GdkCursor **out_cursor)
 {
+    if (out_cursor) *out_cursor = NULL;
     if (!mgr || !parts || parts->len < 4) return false;
 
     const UvPart *p1 = &g_array_index(parts, UvPart, 1);
@@ -167,25 +366,28 @@ bool uv_cursor_handle_shape_transfer(UvCursorManager *mgr, const GArray *parts, 
         return false;
     }
 
-    GdkCursor *cursor = decode_cur_file(cur_buf, dec_ret);
+    UvCursorItem *item = decode_cur_file(cur_buf, dec_ret);
     g_free(cur_buf);
 
-    if (!cursor) return false;
+    if (!item) {
+        item = create_default_arrow_item();
+    }
+    if (!item) return false;
 
     g_mutex_lock(&mgr->mutex);
-    g_hash_table_insert(mgr->cache, GINT_TO_POINTER(hash), g_object_ref(cursor));
+    g_hash_table_insert(mgr->cache, GINT_TO_POINTER(hash), item);
     mgr->current_hash = hash;
-    if (mgr->current_cursor) g_object_unref(mgr->current_cursor);
-    mgr->current_cursor = g_object_ref(cursor);
+    mgr->current_item = item;
 
-    if (out_cursor) *out_cursor = g_object_ref(cursor);
+    if (out_cursor && item->cursor) {
+        *out_cursor = g_object_ref(item->cursor);
+    }
     g_mutex_unlock(&mgr->mutex);
-
-    g_object_unref(cursor);
     return true;
 }
 
-bool uv_cursor_handle_position(UvCursorManager *mgr, const GArray *parts, int16_t *out_x, int16_t *out_y)
+bool uv_cursor_handle_position(UvCursorManager *mgr, const GArray *parts,
+                               int16_t *out_x, int16_t *out_y)
 {
     if (!mgr || !parts || parts->len < 3) return false;
 
@@ -204,4 +406,28 @@ bool uv_cursor_handle_position(UvCursorManager *mgr, const GArray *parts, int16_
     if (out_x) *out_x = x;
     if (out_y) *out_y = y;
     return true;
+}
+
+void uv_cursor_draw_remote(UvCursorManager *mgr, cairo_t *cr, int16_t x, int16_t y)
+{
+    if (!mgr || !cr) return;
+
+    g_mutex_lock(&mgr->mutex);
+    if (mgr->current_item && mgr->current_item->surface) {
+        cairo_set_source_surface(cr, mgr->current_item->surface,
+                                 (double)(x - mgr->current_item->hot_x),
+                                 (double)(y - mgr->current_item->hot_y));
+        cairo_paint(cr);
+    } else {
+        /* Fallback: draw a high-visibility pointer dot with white border */
+        cairo_save(cr);
+        cairo_set_line_width(cr, 1.5);
+        cairo_arc(cr, (double)x, (double)y, 5.0, 0, 2 * G_PI);
+        cairo_set_source_rgba(cr, 1.0, 0.2, 0.2, 0.85);
+        cairo_fill_preserve(cr);
+        cairo_set_source_rgb(cr, 1.0, 1.0, 1.0);
+        cairo_stroke(cr);
+        cairo_restore(cr);
+    }
+    g_mutex_unlock(&mgr->mutex);
 }

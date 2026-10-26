@@ -8,6 +8,7 @@
 #include "uv_input.h"
 #include "uv_clipboard.h"
 #include "uv_command.h"
+#include "uv_cursor.h"
 #include "uv_audio.h"
 #include "uv_file_transfer.h"
 
@@ -246,6 +247,70 @@ static void test_shortcuts_and_clipboard_cmd5(void)
     printf("[✓] Shortcuts & clipboard Command 5 verified.\n");
 }
 
+static void test_cursor_handling(void)
+{
+    printf("[*] Testing cursor selection shape requests & position decoding...\n");
+
+    UvCursorManager *mgr = uv_cursor_manager_new();
+    assert(mgr != NULL);
+
+    /* Test Command 3: cache miss triggers shape request with missing hash */
+    uint8_t c3 = 3;
+    uint8_t hash_bytes[4];
+    uv_write_u32_le(hash_bytes, 0x12345678);
+    UvPart parts3[2] = {
+        { &c3, 1 },
+        { hash_bytes, 4 }
+    };
+    GArray *arr3 = g_array_new(FALSE, FALSE, sizeof(UvPart));
+    g_array_append_vals(arr3, parts3, 2);
+
+    GdkCursor *cur = NULL;
+    int32_t missing_hash = 0;
+    bool found = uv_cursor_handle_selection(mgr, arr3, &cur, &missing_hash);
+    assert(!found);
+    assert(cur == NULL);
+    assert(missing_hash == 0x12345678);
+
+    char req[32];
+    snprintf(req, sizeof(req), "4|||%d", missing_hash);
+    assert(strcmp(req, "4|||305419896") == 0);
+
+    /* Test Ignored Selection Hash (0xb84d1a70) */
+    uv_write_u32_le(hash_bytes, (uint32_t)UV_IGNORED_SELECTION_HASH);
+    found = uv_cursor_handle_selection(mgr, arr3, &cur, &missing_hash);
+    assert(found);
+    assert(cur == NULL);
+    assert(missing_hash == 0);
+    g_array_free(arr3, TRUE);
+
+    /* Test Command 28: Cursor Position */
+    uint8_t c28 = 28;
+    uint8_t x_bytes[2], y_bytes[2];
+    uv_write_u16_le(x_bytes, (uint16_t)850);
+    uv_write_u16_le(y_bytes, (uint16_t)-420);
+    UvPart parts28[3] = {
+        { &c28, 1 },
+        { x_bytes, 2 },
+        { y_bytes, 2 }
+    };
+    GArray *arr28 = g_array_new(FALSE, FALSE, sizeof(UvPart));
+    g_array_append_vals(arr28, parts28, 3);
+
+    int16_t out_x = 0, out_y = 0;
+    bool pos_ok = uv_cursor_handle_position(mgr, arr28, &out_x, &out_y);
+    assert(pos_ok);
+    assert(out_x == 850);
+    assert(out_y == -420);
+    assert(mgr->remote_x == 850);
+    assert(mgr->remote_y == -420);
+    g_array_free(arr28, TRUE);
+
+    uv_cursor_manager_free(mgr);
+
+    printf("[✓] Cursor handling and position decoding verified.\n");
+}
+
 int main(void)
 {
     printf("=========================================\n");
@@ -259,6 +324,7 @@ int main(void)
     test_clipboard();
     test_audio_g722();
     test_shortcuts_and_clipboard_cmd5();
+    test_cursor_handling();
 
     printf("=========================================\n");
     printf("All Unit Tests Passed Successfully!\n");

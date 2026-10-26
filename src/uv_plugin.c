@@ -184,13 +184,24 @@ static const RemminaProtocolFeature remmina_plugin_ultraviewer_features[] = {
 static void uv_transform_coords(RemminaPluginUltraviewerData *gpdata, double widget_x, double widget_y, int *out_x, int *out_y)
 {
     RemminaScaleMode scale_mode = remmina_plugin_service->remmina_protocol_widget_get_current_scale_mode(gpdata->gp);
+    GtkAllocation a;
+    gtk_widget_get_allocation(gpdata->drawing_area, &a);
+
     if (scale_mode != REMMINA_PROTOCOL_WIDGET_SCALE_MODE_NONE && gpdata->remote_width > 0 && gpdata->remote_height > 0) {
-        GtkAllocation a;
-        gtk_widget_get_allocation(gpdata->drawing_area, &a);
         if (a.width > 0 && a.height > 0) {
             widget_x = widget_x * (double)gpdata->remote_width / (double)a.width;
             widget_y = widget_y * (double)gpdata->remote_height / (double)a.height;
         }
+    } else {
+        double ox = 0.0, oy = 0.0;
+        if (a.width > gpdata->remote_width) {
+            ox = (double)(a.width - gpdata->remote_width) / 2.0;
+        }
+        if (a.height > gpdata->remote_height) {
+            oy = (double)(a.height - gpdata->remote_height) / 2.0;
+        }
+        widget_x -= ox;
+        widget_y -= oy;
     }
 
     int vx = (gpdata->session && gpdata->session->renderer) ? gpdata->session->renderer->virtual_origin_x : 0;
@@ -222,21 +233,41 @@ static gboolean remmina_plugin_ultraviewer_on_draw(GtkWidget *widget, cairo_t *c
     g_mutex_lock(&r->mutex);
     if (r->cairo_surface) {
         RemminaScaleMode scale_mode = remmina_plugin_service->remmina_protocol_widget_get_current_scale_mode(gp);
+        GtkAllocation a;
+        gtk_widget_get_allocation(gpdata->drawing_area, &a);
+
         if (scale_mode != REMMINA_PROTOCOL_WIDGET_SCALE_MODE_NONE && gpdata->remote_width > 0 && gpdata->remote_height > 0) {
-            GtkAllocation a;
-            gtk_widget_get_allocation(gpdata->drawing_area, &a);
             cairo_scale(cr, (double)a.width / (double)gpdata->remote_width,
                             (double)a.height / (double)gpdata->remote_height);
-        }
-        cairo_set_source_surface(cr, r->cairo_surface, 0, 0);
-        if (scale_mode != REMMINA_PROTOCOL_WIDGET_SCALE_MODE_NONE) {
+            cairo_set_source_surface(cr, r->cairo_surface, 0, 0);
             cairo_pattern_set_filter(cairo_get_source(cr), (cairo_filter_t)remmina_plugin_service->pref_get_scale_quality());
+            cairo_paint(cr);
+
+            if (gpdata->show_cursor && gpdata->has_remote_cursor) {
+                uv_cursor_draw_remote(gpdata->session->cursor_mgr, cr,
+                                      gpdata->remote_cursor_x, gpdata->remote_cursor_y);
+            }
+        } else {
+            double ox = 0.0, oy = 0.0;
+            if (a.width > gpdata->remote_width) {
+                ox = (double)(a.width - gpdata->remote_width) / 2.0;
+            }
+            if (a.height > gpdata->remote_height) {
+                oy = (double)(a.height - gpdata->remote_height) / 2.0;
+            }
+            cairo_set_source_surface(cr, r->cairo_surface, ox, oy);
+            cairo_paint(cr);
+
+            if (gpdata->show_cursor && gpdata->has_remote_cursor) {
+                uv_cursor_draw_remote(gpdata->session->cursor_mgr, cr,
+                                      (int16_t)(gpdata->remote_cursor_x + ox),
+                                      (int16_t)(gpdata->remote_cursor_y + oy));
+            }
         }
-        cairo_paint(cr);
     }
     g_mutex_unlock(&r->mutex);
 
-    return FALSE;
+    return TRUE;
 }
 
 static gboolean remmina_plugin_ultraviewer_on_motion(GtkWidget *widget, GdkEventMotion *event, gpointer user_data)
@@ -409,18 +440,22 @@ static gboolean on_connected_idle(gpointer user_data)
     RemminaScaleMode scale_mode = remmina_plugin_service->remmina_protocol_widget_get_current_scale_mode(gpdata->gp);
     if (scale_mode != REMMINA_PROTOCOL_WIDGET_SCALE_MODE_NONE) {
         gtk_widget_set_size_request(GTK_WIDGET(gpdata->drawing_area), -1, -1);
+        gtk_widget_set_halign(GTK_WIDGET(gpdata->drawing_area), GTK_ALIGN_FILL);
+        gtk_widget_set_valign(GTK_WIDGET(gpdata->drawing_area), GTK_ALIGN_FILL);
     } else {
         gtk_widget_set_size_request(GTK_WIDGET(gpdata->drawing_area), task->width, task->height);
+        gtk_widget_set_halign(GTK_WIDGET(gpdata->drawing_area), GTK_ALIGN_CENTER);
+        gtk_widget_set_valign(GTK_WIDGET(gpdata->drawing_area), GTK_ALIGN_CENTER);
     }
 
     if (!gpdata->connection_opened) {
         gpdata->connection_opened = true;
-        remmina_plugin_service->protocol_plugin_desktop_resize(gpdata->gp);
         remmina_plugin_service->protocol_plugin_update_align(gpdata->gp);
+        remmina_plugin_service->protocol_plugin_desktop_resize(gpdata->gp);
         remmina_plugin_service->protocol_plugin_signal_connection_opened(gpdata->gp);
     } else {
-        remmina_plugin_service->protocol_plugin_desktop_resize(gpdata->gp);
         remmina_plugin_service->protocol_plugin_update_align(gpdata->gp);
+        remmina_plugin_service->protocol_plugin_desktop_resize(gpdata->gp);
     }
     gtk_widget_queue_draw(gpdata->drawing_area);
 
@@ -461,7 +496,7 @@ static gboolean on_cursor_change_idle(gpointer user_data)
     MarshaledTask *task = (MarshaledTask *)user_data;
     RemminaPluginUltraviewerData *gpdata = task->gpdata;
 
-    if (gpdata->show_cursor && task->cursor) {
+    if (task->cursor) {
         GdkWindow *win = gtk_widget_get_window(gpdata->drawing_area);
         if (win) {
             gdk_window_set_cursor(win, task->cursor);
@@ -481,6 +516,20 @@ static void uv_session_cursor_change_cb(UvSession *session, GdkCursor *cursor, g
     task->gpdata = gpdata;
     task->cursor = cursor ? g_object_ref(cursor) : NULL;
     g_idle_add(on_cursor_change_idle, task);
+}
+
+static void uv_session_cursor_position_cb(UvSession *session, int16_t x, int16_t y, gpointer user_data)
+{
+    (void)session;
+    RemminaPluginUltraviewerData *gpdata = (RemminaPluginUltraviewerData *)user_data;
+    if (gpdata && gpdata->show_cursor) {
+        gpdata->remote_cursor_x = x;
+        gpdata->remote_cursor_y = y;
+        gpdata->has_remote_cursor = true;
+        if (g_atomic_int_compare_and_exchange(&gpdata->redraw_pending, 0, 1)) {
+            g_idle_add(on_frame_ready_idle, gpdata);
+        }
+    }
 }
 
 static gboolean on_clipboard_idle(gpointer user_data)
@@ -676,6 +725,11 @@ static gboolean remmina_plugin_ultraviewer_open_connection(RemminaProtocolWidget
         return FALSE;
     }
 
+    int scale_val = remmina_plugin_service->file_get_int(file, "scale", -1);
+    if (scale_val == -1) {
+        remmina_plugin_service->file_set_int(file, "scale", REMMINA_PROTOCOL_WIDGET_SCALE_MODE_SCALED);
+    }
+
     gpdata->view_only = viewonly;
     gpdata->show_cursor = showcursor;
     gpdata->disable_clipboard = disableclipboard;
@@ -710,6 +764,7 @@ static gboolean remmina_plugin_ultraviewer_open_connection(RemminaProtocolWidget
     gpdata->session->on_connected = uv_session_connected_cb;
     gpdata->session->on_frame_ready = uv_session_frame_ready_cb;
     gpdata->session->on_cursor_change = uv_session_cursor_change_cb;
+    gpdata->session->on_cursor_position = uv_session_cursor_position_cb;
     gpdata->session->on_clipboard_received = uv_session_clipboard_cb;
     gpdata->session->on_chat_received = uv_session_chat_cb;
     gpdata->session->on_closed = uv_session_closed_cb;
@@ -753,9 +808,15 @@ static void remmina_plugin_ultraviewer_call_feature(RemminaProtocolWidget *gp, c
     if (!gpdata || !gpdata->session) return;
 
     switch (feature->id) {
-    case UV_FEATURE_TOOL_REFRESH:
-        uv_session_queue_outbound(gpdata->session, false, (const uint8_t *)"18", 2);
+    case UV_FEATURE_TOOL_REFRESH: {
+        RemminaFile *file = remmina_plugin_service->protocol_plugin_get_file(gp);
+        int qval = remmina_plugin_service->file_get_int(file, "quality", 45);
+        uv_session_queue_outbound(gpdata->session, false, (const uint8_t *)"32|||2", 6);
+        char qbuf[32];
+        g_snprintf(qbuf, sizeof(qbuf), "31|||%d", qval);
+        uv_session_queue_outbound(gpdata->session, false, (const uint8_t *)qbuf, strlen(qbuf));
         break;
+    }
     case UV_FEATURE_TOOL_CHAT:
         remmina_plugin_service->protocol_plugin_chat_open(
             gp,
@@ -806,12 +867,17 @@ static void remmina_plugin_ultraviewer_call_feature(RemminaProtocolWidget *gp, c
         RemminaScaleMode scale_mode = remmina_plugin_service->remmina_protocol_widget_get_current_scale_mode(gp);
         if (scale_mode != REMMINA_PROTOCOL_WIDGET_SCALE_MODE_NONE) {
             gtk_widget_set_size_request(GTK_WIDGET(gpdata->drawing_area), -1, -1);
+            gtk_widget_set_halign(GTK_WIDGET(gpdata->drawing_area), GTK_ALIGN_FILL);
+            gtk_widget_set_valign(GTK_WIDGET(gpdata->drawing_area), GTK_ALIGN_FILL);
         } else {
             int w = gpdata->remote_width > 0 ? gpdata->remote_width : remmina_plugin_service->protocol_plugin_get_width(gp);
             int h = gpdata->remote_height > 0 ? gpdata->remote_height : remmina_plugin_service->protocol_plugin_get_height(gp);
             gtk_widget_set_size_request(GTK_WIDGET(gpdata->drawing_area), w, h);
+            gtk_widget_set_halign(GTK_WIDGET(gpdata->drawing_area), GTK_ALIGN_CENTER);
+            gtk_widget_set_valign(GTK_WIDGET(gpdata->drawing_area), GTK_ALIGN_CENTER);
         }
         remmina_plugin_service->protocol_plugin_update_align(gp);
+        remmina_plugin_service->protocol_plugin_desktop_resize(gp);
         gtk_widget_queue_draw(gpdata->drawing_area);
         break;
     }

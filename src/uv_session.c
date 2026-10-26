@@ -394,10 +394,19 @@ static gpointer uv_session_worker(gpointer user_data)
                             }
                             case 3: { /* Cursor selection */
                                 GdkCursor *cur = NULL;
-                                if (uv_cursor_handle_selection(session->cursor_mgr, parts, &cur) && cur) {
-                                    if (session->on_cursor_change) {
-                                        session->on_cursor_change(session, cur, session->callback_data);
+                                int32_t missing_hash = 0;
+                                if (uv_cursor_handle_selection(session->cursor_mgr, parts, &cur, &missing_hash)) {
+                                    if (cur) {
+                                        if (session->on_cursor_change) {
+                                            session->on_cursor_change(session, cur, session->callback_data);
+                                        }
+                                        g_object_unref(cur);
                                     }
+                                } else if (missing_hash != 0) {
+                                    char req[32];
+                                    g_snprintf(req, sizeof(req), "4|||%d", missing_hash);
+                                    uv_session_queue_outbound(session, false, (const uint8_t *)req, strlen(req));
+                                    drain_outbound_queue(session);
                                 }
                                 break;
                             }
@@ -407,6 +416,7 @@ static gpointer uv_session_worker(gpointer user_data)
                                     if (session->on_cursor_change) {
                                         session->on_cursor_change(session, cur, session->callback_data);
                                     }
+                                    g_object_unref(cur);
                                 }
                                 break;
                             }
@@ -425,7 +435,11 @@ static gpointer uv_session_worker(gpointer user_data)
                             }
                             case 28: { /* Remote cursor coordinates */
                                 int16_t rx = 0, ry = 0;
-                                uv_cursor_handle_position(session->cursor_mgr, parts, &rx, &ry);
+                                if (uv_cursor_handle_position(session->cursor_mgr, parts, &rx, &ry)) {
+                                    if (session->on_cursor_position) {
+                                        session->on_cursor_position(session, rx, ry, session->callback_data);
+                                    }
+                                }
                                 break;
                             }
                             case 5:

@@ -45,6 +45,11 @@ typedef struct {
     /* Cursor queueing */
     GdkCursor *queued_cursor;
     guint queued_cursor_handler;
+
+    /* Remote cursor overlay */
+    int16_t remote_cursor_x;
+    int16_t remote_cursor_y;
+    bool has_remote_cursor;
 } RemminaPluginUltraviewerData;
 
 #define GET_PLUGIN_DATA(gp) ((RemminaPluginUltraviewerData *)g_object_get_data(G_OBJECT(gp), "plugin-data"))

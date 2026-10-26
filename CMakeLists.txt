@@ -96,6 +96,7 @@ add_executable(test_ultraviewer
     src/uv_tls.c
     src/uv_input.c
     src/uv_clipboard.c
+    src/uv_cursor.c
     src/uv_audio.c
     src/uv_file_transfer.c
     src/uv_command.c

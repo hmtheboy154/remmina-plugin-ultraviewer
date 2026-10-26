@@ -72,6 +72,15 @@ static uint8_t *load_screen_dictionary(const char *custom_path, size_t *out_size
     return data;
 }
 
+static void free_cached_tile(gpointer data)
+{
+    if (data) {
+        UvCachedTile *tile = (UvCachedTile *)data;
+        g_free(tile->pixels);
+        g_free(tile);
+    }
+}
+
 UvScreenRenderer *uv_screen_renderer_new(const UvScreenInit *init, const char *custom_dict_path)
 {
     if (!init || init->width <= 0 || init->height <= 0 ||
@@ -101,7 +110,7 @@ UvScreenRenderer *uv_screen_renderer_new(const UvScreenInit *init, const char *c
     r->temp_pixels = g_malloc0(r->temp_stride * (size_t)r->height);
 
     /* Tile cache setup */
-    r->cache = g_hash_table_new_full(g_direct_hash, g_direct_equal, NULL, g_free);
+    r->cache = g_hash_table_new_full(g_direct_hash, g_direct_equal, NULL, free_cached_tile);
     r->cache_order = g_queue_new();
 
     /* Load Zstd dictionary and create DCtx */
@@ -129,14 +138,6 @@ void uv_screen_renderer_free(UvScreenRenderer *r)
     g_free(r->temp_pixels);
 
     if (r->cache) {
-        GHashTableIter iter;
-        gpointer key, value;
-        g_hash_table_iter_init(&iter, r->cache);
-        while (g_hash_table_iter_next(&iter, &key, &value)) {
-            UvCachedTile *tile = (UvCachedTile *)value;
-            g_free(tile->pixels);
-            g_free(tile);
-        }
         g_hash_table_destroy(r->cache);
     }
     if (r->cache_order) {
@@ -507,6 +508,8 @@ bool uv_screen_apply_frame(UvScreenRenderer *r, const GArray *parts, char **err_
             UvCachedTile *tile = g_hash_table_lookup(r->cache, GINT_TO_POINTER(hash));
             if (tile) {
                 rect_buffer_copy(r, tile->pixels, tile->width, tile->height, x, y);
+                g_queue_remove(r->cache_order, GINT_TO_POINTER(hash));
+                g_queue_push_tail(r->cache_order, GINT_TO_POINTER(hash));
             }
         }
     }
@@ -568,7 +571,7 @@ bool uv_screen_apply_frame(UvScreenRenderer *r, const GArray *parts, char **err_
                                 }
                             }
                         }
-                        sy_col += tile_sz;
+                        sy_col += ch;
                     }
                 }
             }
@@ -621,7 +624,6 @@ bool uv_screen_apply_frame(UvScreenRenderer *r, const GArray *parts, char **err_
         UvCachedTile *tile = g_hash_table_lookup(r->cache, oldest_hash);
         if (tile) {
             r->cache_bytes -= (size_t)tile->width * (size_t)tile->height * 2;
-            g_free(tile->pixels);
             g_hash_table_remove(r->cache, oldest_hash);
         }
     }
