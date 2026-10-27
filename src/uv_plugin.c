@@ -1117,43 +1117,25 @@ static void find_and_inject_quick_connect(GtkWidget *widget, gpointer data)
 
 static gboolean inject_quick_connect_timer(gpointer user_data)
 {
-    int *tries = (int *)user_data;
-    if (!tries) return G_SOURCE_REMOVE;
-    (*tries)++;
-
-    GList *toplevels = gtk_window_list_toplevels();
-    gboolean found = FALSE;
-    for (GList *l = toplevels; l; l = l->next) {
-        GtkWidget *win = GTK_WIDGET(l->data);
-        if (GTK_IS_WINDOW(win)) {
-            find_and_inject_quick_connect(win, &found);
-            if (found) break;
-        }
-    }
-    g_list_free(toplevels);
-
-    if (found || *tries >= 60) {
-        g_free(tries);
-        return G_SOURCE_REMOVE;
-    }
-    return G_SOURCE_CONTINUE;
-}
-
-static void on_screen_window_added(GdkScreen *screen, GdkWindow *window, gpointer user_data)
-{
-    (void)screen;
-    (void)window;
     (void)user_data;
     GList *toplevels = gtk_window_list_toplevels();
-    gboolean found = FALSE;
     for (GList *l = toplevels; l; l = l->next) {
         GtkWidget *win = GTK_WIDGET(l->data);
         if (GTK_IS_WINDOW(win)) {
+            /* Skip window if already inspected and injected */
+            if (g_object_get_data(G_OBJECT(win), "uv-injected")) {
+                continue;
+            }
+            gboolean found = FALSE;
             find_and_inject_quick_connect(win, &found);
-            if (found) break;
+            if (found) {
+                /* Tag this GtkWindow so we don't re-traverse it while open */
+                g_object_set_data(G_OBJECT(win), "uv-injected", GINT_TO_POINTER(1));
+            }
         }
     }
     g_list_free(toplevels);
+    return G_SOURCE_CONTINUE;
 }
 
 static RemminaProtocolPlugin remmina_plugin_ultraviewer = {
@@ -1184,12 +1166,8 @@ G_MODULE_EXPORT gboolean remmina_plugin_entry(RemminaPluginService *service)
     remmina_plugin_service = service;
     gboolean ok = service->register_plugin((RemminaPlugin *)&remmina_plugin_ultraviewer);
     if (ok) {
-        GdkScreen *screen = gdk_screen_get_default();
-        if (screen) {
-            g_signal_connect(screen, "window-added", G_CALLBACK(on_screen_window_added), NULL);
-        }
-        int *tries = g_new0(int, 1);
-        g_timeout_add(250, inject_quick_connect_timer, tries);
+        /* Run every 300ms to detect main window creation (at startup or reopen from tray) */
+        g_timeout_add(300, inject_quick_connect_timer, NULL);
     }
     return ok;
 }
