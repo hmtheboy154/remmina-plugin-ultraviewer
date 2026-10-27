@@ -783,7 +783,7 @@ arch=('x86_64')
 url="https://github.com/hmtheboy154/remmina-plugin-ultraviewer"
 license=('GPL-2.0-or-later')
 depends=('remmina' 'gtk3' 'openssl' 'zstd' 'libjpeg-turbo' 'libpulse')
-makedepends=('git' 'cmake' 'pkgconf' 'p7zip')
+makedepends=('git' 'cmake' 'pkgconf' 'innoextract')
 provides=('remmina-plugin-ultraviewer')
 conflicts=('remmina-plugin-ultraviewer')
 source=("git+https://github.com/hmtheboy154/remmina-plugin-ultraviewer.git"
@@ -792,11 +792,13 @@ sha256sums=('SKIP'
             'SKIP')
 
 prepare() {
-    cd "${srcdir}"
-    # Extract 8bit.dat from installer
-    7z e -so UltraViewer_setup_6.6.133_vi.exe "8bit.dat" -r > 8bit.dat || true
-    if [ ! -s 8bit.dat ]; then
-        echo "Warning: 7z extraction failed, trying local fallback"
+    cd "${srcdir}/remmina-plugin-ultraviewer"
+    # Extract official 8bit.dat dictionary from Inno Setup installer
+    if [ ! -f "assets/8bit.dat" ]; then
+        mkdir -p assets/inno_tmp
+        innoextract -e -s --output-dir assets/inno_tmp "${srcdir}/UltraViewer_setup_6.6.133_vi.exe" >/dev/null
+        find assets/inno_tmp -name "8bit.dat" -exec mv -f {} assets/8bit.dat \; 2>/dev/null || true
+        rm -rf assets/inno_tmp
     fi
 }
 

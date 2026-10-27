@@ -912,12 +912,9 @@ The UltraViewer Zstandard screen decompressor strictly requires `8bit.dat` (112,
 
 - **Official Installer URL**: `https://dl2.ultraviewer.net/UltraViewer_setup_6.6.133_vi.exe`
 - **Installer Type**: Inno Setup archive.
-- **Extraction Tools**: Can be extracted on Linux using `innoextract` or `7z`:
+- **Extraction Tool**: Can be extracted on Linux using `innoextract`:
   ```bash
-  # Using innoextract
   innoextract -e -I "app/8bit.dat" UltraViewer_setup_6.6.133_vi.exe
-  # Or using 7z
-  7z e UltraViewer_setup_6.6.133_vi.exe "8bit.dat" -r
   ```
 - **Checksum Verification**:
   ```bash

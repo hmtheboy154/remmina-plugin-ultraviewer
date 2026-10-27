@@ -113,7 +113,7 @@ To extract `8bit.dat` automatically from the official installer:
 The script will:
 1. Check for existing copies in local paths or checkouts.
 2. If missing, download `UltraViewer_setup_6.6.133_vi.exe` from official CDN mirrors.
-3. Extract `8bit.dat` using `7z` or `innoextract`.
+3. Extract `8bit.dat` using `innoextract`.
 4. Validate the cryptographic SHA-256 checksum.
 
 ---

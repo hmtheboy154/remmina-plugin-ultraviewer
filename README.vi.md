@@ -113,7 +113,7 @@ Cơ chế giải nén màn hình của UltraViewer yêu cầu một từ điển
 Script sẽ:
 1. Kiểm tra bản sao sẵn có trên máy hoặc các kho mã nguồn lân cận.
 2. Nếu chưa có, tải bộ cài `UltraViewer_setup_6.6.133_vi.exe` từ máy chủ chính thức.
-3. Trích xuất `8bit.dat` bằng `7z` hoặc `innoextract`.
+3. Trích xuất `8bit.dat` bằng `innoextract`.
 4. Kiểm tra mã băm SHA-256 đảm bảo tính toàn vẹn.
 
 ---

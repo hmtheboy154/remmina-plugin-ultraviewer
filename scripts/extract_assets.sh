@@ -82,9 +82,9 @@ echo "[*] Extracting 8bit.dat from installer..."
 
 EXTRACTED=0
 
-# Try innoextract if available
+# Extract with innoextract
 if command -v innoextract >/dev/null 2>&1; then
-    echo "[*] Trying innoextract..."
+    echo "[*] Extracting with innoextract..."
     if innoextract -e -s --output-dir "${TMP_DIR}/inno_out" "${INSTALLER_PATH}" >/dev/null 2>&1; then
         FOUND=$(find "${TMP_DIR}/inno_out" -name "8bit.dat" | head -n 1)
         if [ -n "${FOUND}" ] && verify_checksum "${FOUND}"; then
@@ -92,18 +92,10 @@ if command -v innoextract >/dev/null 2>&1; then
             EXTRACTED=1
         fi
     fi
-fi
-
-# Fallback to 7z
-if [ "${EXTRACTED}" -eq 0 ] && command -v 7z >/dev/null 2>&1; then
-    echo "[*] Trying 7z..."
-    if 7z e -o"${TMP_DIR}/7z_out" "${INSTALLER_PATH}" "8bit.dat" -r -y >/dev/null 2>&1; then
-        FOUND=$(find "${TMP_DIR}/7z_out" -name "8bit.dat" | head -n 1)
-        if [ -n "${FOUND}" ] && verify_checksum "${FOUND}"; then
-            cp "${FOUND}" "${TARGET_FILE}"
-            EXTRACTED=1
-        fi
-    fi
+else
+    echo "[-] Error: 'innoextract' is required to unpack the UltraViewer Inno Setup installer." >&2
+    echo "    Please install innoextract (e.g. 'sudo pacman -S innoextract' or 'sudo apt install innoextract')." >&2
+    exit 1
 fi
 
 if [ "${EXTRACTED}" -eq 1 ] && verify_checksum "${TARGET_FILE}"; then
@@ -111,6 +103,5 @@ if [ "${EXTRACTED}" -eq 1 ] && verify_checksum "${TARGET_FILE}"; then
     exit 0
 else
     echo "[-] Error: Failed to extract a valid 8bit.dat from ${INSTALLER_URL}." >&2
-    echo "    Please verify that 'innoextract' or '7z' is installed." >&2
     exit 1
 fi
