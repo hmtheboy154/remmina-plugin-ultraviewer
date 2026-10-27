@@ -22,6 +22,7 @@ It is synthesized from:
    - [4.5 Keystroke Injection: `send_keystrokes()`](#45-keystroke-injection-send_keystrokes)
 5. [Connection Profile Settings Configuration](#5-connection-profile-settings-configuration)
 6. [Feature & Tools Integration](#6-feature--tools-integration)
+   - [6.1 Remmina Quick Connect Toolbar & Window Lifecycle](#61-remmina-quick-connect-toolbar--window-lifecycle)
 7. [Subsystem Integrations](#7-subsystem-integrations)
    - [7.1 Framebuffer & Cairo Rendering Subsystem](#71-framebuffer--cairo-rendering-subsystem)
    - [7.2 Input Encoding & Event Subsystem](#72-input-encoding--event-subsystem)
@@ -29,6 +30,8 @@ It is synthesized from:
    - [7.4 Clipboard Synchronization Subsystem](#74-clipboard-synchronization-subsystem)
    - [7.5 In-App Chat Window Subsystem](#75-in-app-chat-window-subsystem)
    - [7.6 Remote Tools & Quick Actions Subsystem](#76-remote-tools--quick-actions-subsystem)
+   - [7.7 Computer Audio Subsystem (G.722 & PulseAudio)](#77-computer-audio-subsystem-g722--pulseaudio)
+   - [7.8 File Transfer Manager Subsystem](#78-file-transfer-manager-subsystem)
 8. [Threading Model & IPC Synchronization](#8-threading-model--ipc-synchronization)
 9. [Error Reporting & Status Signaling](#9-error-reporting--status-signaling)
 10. [Asset Management: `8bit.dat` Dictionary](#10-asset-management-8bitdat-dictionary)
@@ -81,7 +84,7 @@ typedef struct _RemminaProtocolPlugin {
     const gchar *name;                                // Uppercase protocol identifier (e.g. "ULTRAVIEWER")
     const gchar *description;                         // Translatable user description
     const gchar *domain;                              // Gettext domain (or GETTEXT_PACKAGE)
-    const gchar *version;                             // Plugin version string (e.g. "0.1.0")
+    const gchar *version;                             // Plugin version string (e.g. "0.2.0")
     const gchar *icon_name;                           // Normal connection icon name
     const gchar *icon_name_ssh;                       // SSH-tunnelled connection icon name
     const RemminaProtocolSetting *basic_settings;     // Basic profile configuration tab
@@ -182,14 +185,26 @@ static void remmina_plugin_ultraviewer_init(RemminaProtocolWidget *gp)
 ### 4.2 Establishing Connection: `open_connection()`
 Invoked when the user triggers a connection. **Must never block the GTK main thread**:
 
-1. Retrieve profile settings via `remmina_plugin_service->protocol_plugin_get_file(gp)`.
-2. Validate required parameters (Partner ID, Password). If invalid, post an error via `protocol_plugin_set_error(gp, ...)` and return `FALSE`.
-3. Register the hostkey handler:
+1. **Profile Parameter Retrieval & Sanitization**:
+   - Retrieve profile settings via `remmina_plugin_service->protocol_plugin_get_file(gp)`.
+   - Strip all whitespace from the Partner ID string (e.g. `"135 744 079"` $\to$ `"135744079"`). If the partner ID is empty or not numeric, post an error via `protocol_plugin_set_error(gp, ...)` and return `FALSE`.
+2. **Interactive Credential Acquisition**:
+   - If the password is empty (typical when launched via Quick Connect or when credentials are not pre-saved in `.remmina` files), invoke Remmina's authentication dialog on the main thread:
+     ```c
+     gboolean valid = FALSE, save = FALSE;
+     remmina_plugin_service->protocol_plugin_init_auth(gp, &valid, &save);
+     if (!valid) return FALSE;
+     ```
+3. **Register Hostkey Handler**:
    ```c
    remmina_plugin_service->protocol_plugin_register_hostkey(gp, gpdata->drawing_area);
    ```
-4. Spawn the background protocol worker thread `uv_worker_thread`.
-5. Return `TRUE` immediately. Remmina displays a progress spinner until `protocol_plugin_signal_connection_opened()` is signaled.
+4. **Interactive Auth Retry Hook**:
+   - Register an authentication callback (`uv_session_set_auth_request_cb`) on the session object. If lookup fails with status `2` (`UV_ERROR_AUTH`), the worker thread invokes this callback.
+   - The plugin marshals the request to the GTK main thread to display an in-place password retry prompt via `protocol_plugin_init_auth`. The user can re-enter their password (up to 3 attempts) directly on the existing connection view without dropping the window or restarting the session.
+5. **Spawn Worker Thread**:
+   - Launch background protocol thread `uv_worker_thread`.
+   - Return `TRUE` immediately. Remmina displays a progress spinner until `protocol_plugin_signal_connection_opened()` is signaled upon receiving Command 0 (`ScreenInit`).
 
 ### 4.3 Teardown: `close_connection()`
 Invoked when the session terminates or the window is closed:
@@ -227,12 +242,13 @@ static const RemminaProtocolSetting remmina_plugin_ultraviewer_basic_settings[] 
 };
 
 static const RemminaProtocolSetting remmina_plugin_ultraviewer_advanced_settings[] = {
-    { REMMINA_PROTOCOL_SETTING_TYPE_SELECT,   "quality",           N_("Quality Preset"),     FALSE, "speed;balanced;quality", NULL },
-    { REMMINA_PROTOCOL_SETTING_TYPE_CHECK,    "showcursor",        N_("Show Remote Cursor"), FALSE, NULL, NULL },
-    { REMMINA_PROTOCOL_SETTING_TYPE_CHECK,    "disableclipboard",  N_("Disable Clipboard"),  FALSE, NULL, NULL },
-    { REMMINA_PROTOCOL_SETTING_TYPE_FILE,     "dictpath",          N_("Dictionary Path"),    FALSE, NULL, N_("Path to 8bit.dat (optional)") },
-    { REMMINA_PROTOCOL_SETTING_TYPE_CHECK,    "insecure_tls",      N_("Ignore TLS Errors"),  FALSE, NULL, N_("For debugging only") },
-    { REMMINA_PROTOCOL_SETTING_TYPE_END,      NULL,                NULL,                     FALSE, NULL, NULL }
+    { REMMINA_PROTOCOL_SETTING_TYPE_SELECT,   "quality",           N_("Quality Preset"),        FALSE, "speed;balanced;quality", NULL },
+    { REMMINA_PROTOCOL_SETTING_TYPE_CHECK,    "showcursor",        N_("Show Remote Cursor"),    FALSE, NULL, NULL },
+    { REMMINA_PROTOCOL_SETTING_TYPE_CHECK,    "disableclipboard",  N_("Disable Clipboard"),     FALSE, NULL, NULL },
+    { REMMINA_PROTOCOL_SETTING_TYPE_CHECK,    "disableaudio",      N_("Disable Computer Audio"),FALSE, NULL, NULL },
+    { REMMINA_PROTOCOL_SETTING_TYPE_FILE,     "dictpath",          N_("Dictionary Path"),       FALSE, NULL, N_("Path to 8bit.dat (optional)") },
+    { REMMINA_PROTOCOL_SETTING_TYPE_CHECK,    "insecure_tls",      N_("Ignore TLS Errors"),     FALSE, NULL, N_("For debugging only") },
+    { REMMINA_PROTOCOL_SETTING_TYPE_END,      NULL,                NULL,                        FALSE, NULL, NULL }
 };
 ```
 
@@ -249,33 +265,98 @@ enum {
     UV_FEATURE_UNFOCUS,
     UV_FEATURE_TOOL_REFRESH,
     UV_FEATURE_TOOL_CHAT,
+    UV_FEATURE_TOOL_SENDFILE,
+    UV_FEATURE_TOOL_AUDIO_TOGGLE,
     UV_FEATURE_TOOL_SENDCTRLALTDEL,
     UV_FEATURE_TOOL_LOCK,
     UV_FEATURE_TOOL_REBOOT,
     UV_FEATURE_TOOL_WALLPAPER,
-    UV_FEATURE_PREF_QUALITY
+    UV_FEATURE_PREF_QUALITY,
+    UV_FEATURE_PREF_AUDIO,
+    UV_FEATURE_PREF_SHOWCURSOR
 };
 
 static const RemminaProtocolFeature remmina_plugin_ultraviewer_features[] = {
     // Toolbar Tools
-    { REMMINA_PROTOCOL_FEATURE_TYPE_TOOL,     UV_FEATURE_TOOL_REFRESH,        N_("Refresh Screen"),       "view-refresh", NULL },
-    { REMMINA_PROTOCOL_FEATURE_TYPE_TOOL,     UV_FEATURE_TOOL_CHAT,           N_("Chat…"),                "face-smile",   NULL },
-    { REMMINA_PROTOCOL_FEATURE_TYPE_TOOL,     UV_FEATURE_TOOL_SENDCTRLALTDEL, N_("Send Ctrl+Alt+Delete"), NULL,           NULL },
-    { REMMINA_PROTOCOL_FEATURE_TYPE_TOOL,     UV_FEATURE_TOOL_LOCK,           N_("Lock Workstation"),     NULL,           NULL },
-    { REMMINA_PROTOCOL_FEATURE_TYPE_TOOL,     UV_FEATURE_TOOL_REBOOT,         N_("Reboot Computer"),      NULL,           NULL },
-    { REMMINA_PROTOCOL_FEATURE_TYPE_TOOL,     UV_FEATURE_TOOL_WALLPAPER,      N_("Toggle Wallpaper"),     NULL,           NULL },
+    { REMMINA_PROTOCOL_FEATURE_TYPE_TOOL,     UV_FEATURE_TOOL_REFRESH,        N_("Refresh Screen"),       "view-refresh",     NULL },
+    { REMMINA_PROTOCOL_FEATURE_TYPE_TOOL,     UV_FEATURE_TOOL_CHAT,           N_("Chat…"),                "face-smile",       NULL },
+    { REMMINA_PROTOCOL_FEATURE_TYPE_TOOL,     UV_FEATURE_TOOL_SENDFILE,       N_("Send File…"),           "document-send",    NULL },
+    { REMMINA_PROTOCOL_FEATURE_TYPE_TOOL,     UV_FEATURE_TOOL_AUDIO_TOGGLE,   N_("Mute/Unmute Audio"),    "audio-volume-high",NULL },
+    { REMMINA_PROTOCOL_FEATURE_TYPE_TOOL,     UV_FEATURE_TOOL_SENDCTRLALTDEL, N_("Send Ctrl+Alt+Delete"), NULL,               NULL },
+    { REMMINA_PROTOCOL_FEATURE_TYPE_TOOL,     UV_FEATURE_TOOL_LOCK,           N_("Lock Workstation"),     NULL,               NULL },
+    { REMMINA_PROTOCOL_FEATURE_TYPE_TOOL,     UV_FEATURE_TOOL_REBOOT,         N_("Reboot Computer"),      NULL,               NULL },
+    { REMMINA_PROTOCOL_FEATURE_TYPE_TOOL,     UV_FEATURE_TOOL_WALLPAPER,      N_("Toggle Wallpaper"),     NULL,               NULL },
 
     // Standard Features
-    { REMMINA_PROTOCOL_FEATURE_TYPE_SCALE,    UV_FEATURE_SCALE,               NULL,                       NULL,           NULL },
+    { REMMINA_PROTOCOL_FEATURE_TYPE_SCALE,    UV_FEATURE_SCALE,               NULL,                       NULL,               NULL },
     { REMMINA_PROTOCOL_FEATURE_TYPE_VIEWONLY, UV_FEATURE_VIEWONLY,            GINT_TO_POINTER(REMMINA_PROTOCOL_FEATURE_PREF_CHECK), "viewonly", N_("View only") },
-    { REMMINA_PROTOCOL_FEATURE_TYPE_UNFOCUS,  UV_FEATURE_UNFOCUS,             NULL,                       NULL,           NULL },
+    { REMMINA_PROTOCOL_FEATURE_TYPE_UNFOCUS,  UV_FEATURE_UNFOCUS,             NULL,                       NULL,               NULL },
 
-    // Preferences
+    // Preferences & Toggles
     { REMMINA_PROTOCOL_FEATURE_TYPE_PREF,     UV_FEATURE_PREF_QUALITY,        GINT_TO_POINTER(REMMINA_PROTOCOL_FEATURE_PREF_RADIO), "quality", quality_options },
+    { REMMINA_PROTOCOL_FEATURE_TYPE_PREF,     UV_FEATURE_PREF_AUDIO,          GINT_TO_POINTER(REMMINA_PROTOCOL_FEATURE_PREF_CHECK), "disableaudio", N_("Disable Audio") },
+    { REMMINA_PROTOCOL_FEATURE_TYPE_PREF,     UV_FEATURE_PREF_SHOWCURSOR,     GINT_TO_POINTER(REMMINA_PROTOCOL_FEATURE_PREF_CHECK), "showcursor", N_("Show Remote Cursor") },
 
-    { REMMINA_PROTOCOL_FEATURE_TYPE_END,      0,                              NULL,                       NULL,           NULL }
+    { REMMINA_PROTOCOL_FEATURE_TYPE_END,      0,                              NULL,                       NULL,               NULL }
 };
 ```
+
+### 6.1 Remmina Quick Connect Toolbar & Window Lifecycle
+
+Remmina's main window features a prominent "Quick Connect" bar allowing users to quickly enter an address/ID and hit Connect.
+
+#### The Hardcoded Plugin Limitation
+In upstream Remmina (`src/remmina_main.c`), the Quick Connect protocol list is hardcoded:
+```c
+static const gchar *quick_connect_plugin_list[] = { "RDP", "VNC", "SSH", "NX", "SPICE", "X2GO", NULL };
+```
+External protocol plugins loaded dynamically via GModule are not automatically added to `combo_quick_connect_protocol`.
+
+#### Dynamic Injection Technique
+During plugin initialization (`remmina_plugin_entry`), the plugin inspects active top-level `GtkWindow` instances to locate the `RemminaMain` window and its combo box:
+```c
+static void uv_inject_quick_connect_combo(GtkWidget *widget, gpointer user_data)
+{
+    if (GTK_IS_COMBO_BOX(widget)) {
+        const gchar *name = gtk_widget_get_name(widget);
+        if (g_strcmp0(name, "combo_quick_connect_protocol") == 0) {
+            gtk_combo_box_text_append_text(GTK_COMBO_BOX_TEXT(widget), "ULTRAVIEWER");
+        }
+    }
+    if (GTK_IS_CONTAINER(widget)) {
+        gtk_container_forall(GTK_CONTAINER(widget), uv_inject_quick_connect_combo, user_data);
+    }
+}
+```
+
+#### Surviving System Tray "Open Main Window" Reopenings
+A subtle lifecycle pitfall exists when users close the Remmina main window with the system tray icon enabled:
+1. Closing the window does **NOT** simply hide it; Remmina completely destroys the `RemminaMain` `GtkWindow` instance (`gtk_widget_destroy`).
+2. When the user clicks "Open Main Window" from the system tray popup, Remmina instantiates a **brand new `GtkWindow`** via `remmina_main_new()`.
+3. A one-shot timer executed once at startup would fail to inject `"ULTRAVIEWER"` into newly spawned main windows.
+
+**Robust Injection Strategy**:
+The plugin maintains a persistent, zero-overhead background timer (every 300 ms):
+```c
+static gboolean uv_poll_main_window_quick_connect(gpointer user_data)
+{
+    GList *toplevels = gtk_window_list_toplevels();
+    for (GList *l = toplevels; l != NULL; l = l->next) {
+        GtkWindow *win = GTK_WINDOW(l->data);
+        if (g_strcmp0(G_OBJECT_TYPE_NAME(win), "RemminaMain") == 0) {
+            if (!g_object_get_data(G_OBJECT(win), "uv-quick-connect-injected")) {
+                uv_inject_quick_connect_combo(GTK_WIDGET(win), NULL);
+                g_object_set_data(G_OBJECT(win), "uv-quick-connect-injected", GINT_TO_POINTER(1));
+            }
+        }
+    }
+    g_list_free(toplevels);
+    return G_SOURCE_CONTINUE;
+}
+```
+- Tagging windows with `g_object_set_data` ensures each window is scanned exactly once.
+- Once injected, subsequent 300 ms ticks perform a single pointer check per window (0.00% CPU utilization).
+- This guarantees that `"ULTRAVIEWER"` is immediately available in the Quick Connect dropdown at initial startup and every time the main window is reopened from the system tray.
 
 ---
 
@@ -288,20 +369,39 @@ The remote desktop is rendered into a Cairo image surface with format `CAIRO_FOR
 - The background worker thread holds `surface_mutex` while updating the surface pixels from decompressed Zstd and JPEG streams.
 - The GTK `draw` signal acquires `surface_mutex` and renders the surface to the screen.
 
+#### Aspect-Ratio-Preserving Fit & Letterboxing
+When connecting to hosts with display aspect ratios different from the client (for example, a 3:2 Microsoft Surface Pro at 2736×1824 viewed on a 16:9 1920×1080 laptop):
+- Independent $X$ and $Y$ stretching causes severe text distortion, blurred fonts, and squished UI controls.
+- The plugin implements **uniform aspect-ratio scaling** with solid black letterbox (top/bottom) or pillarbox (left/right) margins:
+
 ```c
 static gboolean remmina_plugin_ultraviewer_on_draw(GtkWidget *widget, cairo_t *cr, gpointer user_data)
 {
     RemminaProtocolWidget *gp = REMMINA_PROTOCOL_WIDGET(user_data);
     RemminaPluginUltraviewerData *gpdata = GET_PLUGIN_DATA(gp);
 
+    GtkAllocation a;
+    gtk_widget_get_allocation(widget, &a);
+
+    // 1. Fill entire widget background with solid black (margins)
+    cairo_set_source_rgb(cr, 0.0, 0.0, 0.0);
+    cairo_paint(cr);
+
     g_mutex_lock(&gpdata->surface_mutex);
-    if (gpdata->surface) {
+    if (gpdata->surface && gpdata->remote_width > 0 && gpdata->remote_height > 0) {
         RemminaScaleMode scale_mode = remmina_plugin_service->remmina_protocol_widget_get_current_scale_mode(gp);
         if (scale_mode != REMMINA_PROTOCOL_WIDGET_SCALE_MODE_NONE) {
-            GtkAllocation a;
-            gtk_widget_get_allocation(widget, &a);
-            cairo_scale(cr, (double)a.width / gpdata->remote_width,
-                            (double)a.height / gpdata->remote_height);
+            // Compute uniform scale factor
+            double sx = (double)a.width / (double)gpdata->remote_width;
+            double sy = (double)a.height / (double)gpdata->remote_height;
+            double s = (sx < sy) ? sx : sy;
+
+            // Center remote desktop within allocated area
+            double off_x = (a.width - (double)gpdata->remote_width * s) / 2.0;
+            double off_y = (a.height - (double)gpdata->remote_height * s) / 2.0;
+
+            cairo_translate(cr, off_x, off_y);
+            cairo_scale(cr, s, s);
         }
         cairo_set_source_surface(cr, gpdata->surface, 0, 0);
         cairo_paint(cr);
@@ -336,18 +436,33 @@ void uv_notify_frame_ready(RemminaPluginUltraviewerData *gpdata)
 
 ### 7.2 Input Encoding & Event Subsystem
 
-#### Coordinate Scaling
-When scaling is active, coordinates must be transformed before applying virtual desktop offsets:
+#### Coordinate Scaling & Inversion
+When aspect-ratio scaling is active, incoming pointer event coordinates must invert both the centering offset and the uniform scale factor before mapping to the remote desktop space:
 
 ```c
 static void uv_transform_coords(RemminaPluginUltraviewerData *gpdata, double widget_x, double widget_y, int *out_x, int *out_y)
 {
     RemminaScaleMode scale_mode = remmina_plugin_service->remmina_protocol_widget_get_current_scale_mode(gpdata->gp);
-    if (scale_mode != REMMINA_PROTOCOL_WIDGET_SCALE_MODE_NONE) {
+    if (scale_mode != REMMINA_PROTOCOL_WIDGET_SCALE_MODE_NONE && gpdata->remote_width > 0 && gpdata->remote_height > 0) {
         GtkAllocation a;
         gtk_widget_get_allocation(gpdata->drawing_area, &a);
-        widget_x = widget_x * gpdata->remote_width / a.width;
-        widget_y = widget_y * gpdata->remote_height / a.height;
+
+        double sx = (double)a.width / (double)gpdata->remote_width;
+        double sy = (double)a.height / (double)gpdata->remote_height;
+        double s = (sx < sy) ? sx : sy;
+
+        double off_x = (a.width - (double)gpdata->remote_width * s) / 2.0;
+        double off_y = (a.height - (double)gpdata->remote_height * s) / 2.0;
+
+        // Invert translation and scale
+        widget_x = (widget_x - off_x) / s;
+        widget_y = (widget_y - off_y) / s;
+
+        // Clamp to remote desktop boundary
+        if (widget_x < 0) widget_x = 0;
+        if (widget_x >= gpdata->remote_width) widget_x = gpdata->remote_width - 1;
+        if (widget_y < 0) widget_y = 0;
+        if (widget_y >= gpdata->remote_height) widget_y = gpdata->remote_height - 1;
     }
     *out_x = (int)widget_x + gpdata->virtual_origin_x;
     *out_y = (int)widget_y + gpdata->virtual_origin_y;
@@ -465,10 +580,16 @@ static void remmina_plugin_ultraviewer_call_feature(RemminaProtocolWidget *gp, c
 
     switch (feature->id) {
     case UV_FEATURE_TOOL_REFRESH:
-        uv_queue_session_refresh(gpdata);
+        uv_session_refresh_screen(gpdata->session);
         break;
     case UV_FEATURE_TOOL_CHAT:
         uv_open_chat_dialog(gp);
+        break;
+    case UV_FEATURE_TOOL_SENDFILE:
+        uv_file_open_dialog(gp);
+        break;
+    case UV_FEATURE_TOOL_AUDIO_TOGGLE:
+        uv_audio_toggle(gpdata->audio_player);
         break;
     case UV_FEATURE_TOOL_SENDCTRLALTDEL:
         uv_queue_unicode_action(gpdata, "22");
@@ -486,6 +607,30 @@ static void remmina_plugin_ultraviewer_call_feature(RemminaProtocolWidget *gp, c
     }
 }
 ```
+
+---
+
+### 7.7 Computer Audio Subsystem (G.722 & PulseAudio)
+
+UltraViewer supports streaming remote Windows system audio to the Linux client:
+- **Audio Activation (Command 46)**: If "Disable Audio" is not checked, the plugin sends UTF-16LE `"46|||-1"` upon connection to activate WASAPI loopback capture on the remote host.
+- **Decoding (ITU-T G.722)**:
+  - Audio packets arrive via multipart Command 43 at 16,000 Hz, 64 kbps mono.
+  - The embedded ITU-T G.722 sub-band ADPCM decoder unpacks 8-bit encoded samples into 16-bit linear PCM.
+- **Low-Latency PulseAudio Sink**:
+  - Initialized with `pa_simple_new(NULL, "Remmina UltraViewer", PA_STREAM_PLAYBACK, NULL, "Audio", &ss, NULL, NULL, &err)`.
+  - Output samples are dispatched synchronously to `pa_simple_write()`.
+- **Silence Handling (Command 42)**: When the remote machine is silent, Command 42 supplies a PCM byte count, which is synthesized as zeroes to prevent buffer underruns without stalling the audio stream.
+
+---
+
+### 7.8 File Transfer Manager Subsystem
+
+Bidirectional file transfer operates independently of the remote display loop:
+- **Sending Files (Command 13)**: The user selects a local file via `GtkFileChooserDialog`. The plugin offers the file with its name, byte length, and a randomized UUID transfer ID.
+- **Chunk Streaming (Command 15)**: Once the host accepts (Command 14), the file is read in chunks of up to 32,000 bytes and transmitted inside forward envelopes.
+- **Window Flow Control (Command 21)**: The client waits for Command 21 chunk acks before advancing the sliding window, ensuring reliable delivery across high-latency connections.
+- **Cancellation (Command 16)**: Transfers can be aborted cleanly at any time by either endpoint.
 
 ---
 
@@ -563,6 +708,7 @@ pkg_check_modules(GTK3 REQUIRED gtk+-3.0)
 pkg_check_modules(OPENSSL REQUIRED openssl)
 pkg_check_modules(ZSTD REQUIRED libzstd)
 pkg_check_modules(JPEG REQUIRED libjpeg)
+pkg_check_modules(PULSE REQUIRED libpulse-simple)
 
 find_path(REMMINA_INCLUDE_DIR remmina/plugin.h
     PATHS /usr/include /usr/local/include)
@@ -579,8 +725,11 @@ set(SOURCES
     src/uv_cursor.c
     src/uv_clipboard.c
     src/uv_chat.c
+    src/uv_file.c
+    src/uv_audio.c
     src/uv_input.c
     src/uv_crypto.c
+    src/g722_decode.c
 )
 
 add_library(remmina-plugin-ultraviewer MODULE ${SOURCES})
@@ -596,6 +745,7 @@ target_include_directories(remmina-plugin-ultraviewer PRIVATE
     ${OPENSSL_INCLUDE_DIRS}
     ${ZSTD_INCLUDE_DIRS}
     ${JPEG_INCLUDE_DIRS}
+    ${PULSE_INCLUDE_DIRS}
     include
 )
 
@@ -604,6 +754,7 @@ target_link_libraries(remmina-plugin-ultraviewer PRIVATE
     ${OPENSSL_LIBRARIES}
     ${ZSTD_LIBRARIES}
     ${JPEG_LIBRARIES}
+    ${PULSE_LIBRARIES}
     m
     pthread
 )
@@ -625,13 +776,13 @@ install(FILES icons/scalable/apps/remmina-ultraviewer.svg
 ```bash
 # Maintainer: hmtheboy154 <buingoc67@gmail.com>
 pkgname=remmina-plugin-ultraviewer-git
-pkgver=0.1.0.r0
+pkgver=0.2.0.r0
 pkgrel=1
 pkgdesc="UltraViewer protocol plugin for Remmina"
 arch=('x86_64')
 url="https://github.com/hmtheboy154/remmina-plugin-ultraviewer"
 license=('GPL-2.0-or-later')
-depends=('remmina' 'gtk3' 'openssl' 'zstd' 'libjpeg-turbo')
+depends=('remmina' 'gtk3' 'openssl' 'zstd' 'libjpeg-turbo' 'libpulse')
 makedepends=('git' 'cmake' 'pkgconf' 'p7zip')
 provides=('remmina-plugin-ultraviewer')
 conflicts=('remmina-plugin-ultraviewer')
@@ -693,8 +844,11 @@ remmina-plugin-ultraviewer/
 │   ├── uv_cursor.h                   # Windows CUR parser and GdkCursor cache
 │   ├── uv_clipboard.h                # Clipboard sync and loopback timer
 │   ├── uv_chat.h                     # In-session chat window bindings
+│   ├── uv_file.h                     # File transfer manager and chunk windowing
+│   ├── uv_audio.h                    # PulseAudio player and G.722 decoder binding
 │   ├── uv_input.h                    # Mouse/keyboard mapping and encoders
-│   └── uv_crypto.h                   # 3DES, AES-CBC, MD5, SHA1 helpers
+│   ├── uv_crypto.h                   # 3DES, AES-CBC, MD5, SHA1 helpers
+│   └── g722_decode.h                 # ITU-T G.722 sub-band ADPCM decoder
 ├── src/
 │   ├── uv_plugin.c                   # Entry point and Remmina callbacks
 │   ├── uv_session.c                  # Worker thread state machine
@@ -704,8 +858,13 @@ remmina-plugin-ultraviewer/
 │   ├── uv_cursor.c                   # Cursor shape decoding and GDK setup
 │   ├── uv_clipboard.c                # GtkClipboard integration
 │   ├── uv_chat.c                     # Remmina chat dialog hooks
+│   ├── uv_file.c                     # File transfer state machine
+│   ├── uv_audio.c                    # PulseAudio sink management
 │   ├── uv_input.c                    # Event translation (GDK -> Win32)
-│   └── uv_crypto.c                   # OpenSSL wrapper functions
+│   ├── uv_crypto.c                   # OpenSSL wrapper functions
+│   └── g722_decode.c                 # G.722 ADPCM implementation
+├── tests/
+│   └── test_ultraviewer.c            # Comprehensive unit test suite
 └── assets/
     └── .gitkeep                      # Target directory for 8bit.dat
 ```

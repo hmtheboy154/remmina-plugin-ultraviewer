@@ -27,6 +27,7 @@ This reference serves as the specification for building the native `remmina-plug
 5. [Session Lifecycle & Command Dispatch](#5-session-lifecycle--command-dispatch)
    - [5.1 Complete Command Matrix](#51-complete-command-matrix)
    - [5.2 Re-Login & Relay Switching](#52-re-login--relay-switching)
+   - [5.3 Dynamic Screen Refresh & Resolution Renegotiation](#53-dynamic-screen-refresh--resolution-renegotiation)
 6. [Screen Initialization (Command 0)](#6-screen-initialization-command-0)
 7. [Screen Frame Updates (Command 1)](#7-screen-frame-updates-command-1)
 8. [Framebuffer & Rendering Pipeline](#8-framebuffer--rendering-pipeline)
@@ -290,21 +291,38 @@ Exactly 17 colon-separated fields:
 | 16 | `direct_opts` | Direct P2P negotiation parameters (empty for relay mode) |
 
 **Server Reply (Command 8)**:
+
+The server reply format depends on whether the lookup succeeded:
+
+1. **Success Reply (`status = 1`)**:
 ```text
-8:<status>:<lan_ip>:...:<public_ip>:...:<target_port>:...:<b64_name>:...:<relay_ip>:...:<relay_hostname>:...:<secret_token>:...:<corr_id>
+8:1:<lan_ip>:...:<public_ip>:...:<target_port>:...:<b64_name>:...:<relay_ip>:...:<relay_hostname>:...:<secret_token>:...:<corr_id>
 ```
-Field mapping:
-- Index 1: Status code:
-  - `1`: Success, credentials valid.
-  - `2`: Wrong partner password.
-  - `0` / `-1`: Partner ID is offline.
-  - Other: Lookup rejected.
+Contains 15 to 22 colon-separated fields:
+- Index 1: Status code `1` (Success, credentials verified).
 - Index 4: Remote partner public IPv4.
 - Index 9: Remote partner target port.
 - Index 11: Designated relay server IPv4 address.
 - Index 14: Relay server TLS hostname (for certificate verification).
 - Index 20: Per-session secret token.
 - Last Index: Correlation ID (must match request `corr_id`).
+
+2. **Compact Error Reply (`status != 1`)**:
+When partner authentication fails or the remote host is unreachable, the server returns a **short 3-token reply**:
+```text
+8:<status>:<corr_id>
+```
+Field mapping:
+- Index 0: Command `"8"`
+- Index 1: Status code:
+  - `2`: Wrong partner password (`UV_ERROR_AUTH`).
+  - `0` / `-1`: Partner ID is offline or does not exist (`UV_ERROR_OFFLINE`).
+  - `5`: Connection rejected or blacklisted by partner settings (`UV_ERROR_REJECTED`).
+  - Other non-1 values: General lookup failure (`UV_ERROR_LOOKUP`).
+- Index 2: Correlation ID (matching request `corr_id`).
+
+> [!WARNING]
+> **Compact Error Reply Parsing**: Parsers must evaluate `tokens[1]` immediately upon splitting tokens. Enforcing a minimum field count check (e.g. $\ge 15$) before inspecting `status` causes authentication failures (status `2`) or offline partner errors (status `0`) to be falsely reported as `"Malformed lookup reply from server"`. Remmina uses status 2 to trigger the interactive in-place password retry dialog.
 
 ### 3.4 Command Keepalive
 
@@ -403,6 +421,25 @@ Peer application messages are either multipart payloads (`part[0][0] = command`)
 
 - **Command 23 (Re-login)**: If the host issues Command 23, the viewer immediately transitions to inactive and transmits a fresh login message with `control_mode = -1`.
 - **Command 26 (Relay Switch)**: Part 1 contains the session connection hash. If it matches, the viewer updates its destination relay IP/port to match the incoming forward envelope header, discards its current renderer state, and transmits a fresh login with `control_mode = -1` and `clear_control = true`.
+
+### 5.3 Dynamic Screen Refresh & Resolution Renegotiation
+
+#### Host Resolution Change Behavior
+The UltraViewer Windows host does NOT register or respond to the Windows `WM_DISPLAYCHANGE` broadcast message while an active remote control session is streaming. When the remote user or host OS alters the display resolution mid-session (for example, switching from 2736×1824 down to 1280×720):
+1. The host display capture loop automatically clamps its screen grab region to the new bounding rectangle `(0, 0, w_new, h_new)`.
+2. Tiles outside the new dimensions are never re-captured or transmitted.
+3. Because no `Command 0` is emitted spontaneously by the host, the viewer's framebuffer retains the old resolution dimensions (`w_old, h_old`), with stale pixels frozen in the margins outside the new viewport.
+4. Subsequent frame updates are painted only into the top-left sub-rectangle of the old canvas, appearing shrunk or off-center.
+
+#### Renegotiation Protocol Sequence
+To force the host to query current monitor metrics and transmit a fresh `Command 0`:
+1. The viewer initiates a session renegotiation by transmitting a full login message with `controlMode = 0` (or `clearControlMode = true`):
+   ```text
+   login:<nonce>:<pw_proof>:<width>:<height>:0:15:15:0:0:<local_id>:<display_name>:0:<pw_proof32>::<conn_hash>:2:45:0:0:<secret_token>:6.6.133:0
+   ```
+2. Upon processing this login payload, the host re-queries the Windows virtual desktop metrics (`GetSystemMetrics(SM_CXVIRTUALSCREEN)`, `GetSystemMetrics(SM_CYVIRTUALSCREEN)`) and emits a fresh `Command 0` (`ScreenInit`) with the updated dimensions.
+3. The viewer's screen renderer resets its sequence tracker (`last_frame_number = 0x80000001`), destroys its existing Cairo surface under mutex, allocates a new Cairo surface matching the updated geometry, and acknowledges with ASCII `"17"` and `"28|||1"`.
+4. Subsequent frames cleanly populate the newly sized framebuffer without visual artifacts or canvas distortion. This sequence is triggered by Remmina's **Refresh Screen** toolbar action (`UV_FEATURE_TOOL_REFRESH`).
 
 ---
 
@@ -509,9 +546,14 @@ static inline uint32_t rgb555_to_xrgb8888(uint16_t v) {
 
 Part 7 contains a standard JFIF/JPEG image acting as a tile atlas:
 - Decoded into an uncompressed RGB bitmap via `libjpeg-turbo`.
-- Tiles are addressed in column-major order: outer loop steps X across the destination auxiliary rectangle, inner loop steps Y down the column in increments of `tile_size`.
+- Tiles are addressed in column-major order: outer loop steps X across the destination auxiliary rectangle, inner loop steps Y down the column in increments of tile height `ch`.
 - Source rows are addressed bottom-up:
   $$\text{atlas\_row} = \text{atlas.height} - 1 - \text{source\_y} - \text{row}$$
+
+> [!IMPORTANT]
+> **Boundary Tile Stride**:
+> When extracting tiles from the JPEG atlas, the vertical step down the atlas column for edge/boundary tiles (where remaining tile height `ch < tile_size`) MUST be `ch` (the actual tile height), NOT the nominal `tile_size` (16 pixels).
+> Using a fixed stride of 16 for boundary tiles causes vertical coordinate drift in the JPEG atlas reader, shifting subsequent tile source rectangles upward and introducing visual glitches, desktop tearing, and distorted UI regions.
 
 ---
 
@@ -539,7 +581,9 @@ UltraViewer provides a complete remote hardware cursor system, handling both poi
 
 ### 10.1 Cursor Position Updates (Command `28`)
 
-- **Enabling Cursor Updates**: The viewer sends ASCII `"28|||1"` (format flag 0) once after Command 0. The host then begins broadcasting cursor movement.
+- **Enabling/Disabling Cursor Updates**:
+  - The viewer enables cursor tracking by sending ASCII `"28|||1"` (format flag 0) upon screen initialization.
+  - The viewer can disable remote cursor tracking at runtime by sending ASCII `"28|||0"` (for example, when the user toggles "Show Remote Cursor" off). When disabled, the host stops transmitting pointer motion packets, and the viewer restores the default desktop cursor.
 - **Position Wire Payload**: Host sends multipart Command 28:
   - `part[0]`: Command byte `0x1C` (28).
   - `part[1]`: Signed 16-bit integer `x` coordinate (`int16_le`).
@@ -552,8 +596,13 @@ When the remote mouse cursor changes shape to a previously seen or standard shap
 - Host sends multipart Command 3:
   - `part[0]`: Command byte `0x03`.
   - `part[1]`: Signed 32-bit hash (`int32_le`).
-- If the hash matches the special value `0xb84d1a70` (`ignoredSelectionHash`), the selection update is discarded.
-- Otherwise, the client looks up the hash in its cursor cache and activates the corresponding `GdkCursor`.
+- **Ignored Selection Hash**: If the hash matches the special value `0xb84d1a70` (`ignoredSelectionHash`), the selection update is discarded. This sentinel value is used by Windows hosts to signify standard pointer reset or hidden pointer states.
+- **Cache Hit**: The client looks up the hash in its cursor cache and immediately activates the corresponding `GdkCursor`.
+- **Cache Miss (On-Demand Fetch)**: If the hash is NOT found in the viewer's local shape cache (e.g. following session reconnect or packet drop), the viewer requests the missing shape by sending Command 4:
+  ```text
+  4|||<hash>
+  ```
+  The host will respond by transmitting a full Command 4 cursor shape transfer.
 
 ### 10.3 Cursor Shape Transfer (Command `4`)
 
@@ -566,7 +615,7 @@ When the host introduces a new cursor shape:
 - **Decompression**: Decompressed with standard Zstandard **WITHOUT any dictionary** (`ZSTD_createDCtx()`).
 - **Decompressed Content**: A complete binary Windows `.cur` cursor file.
 
-### 10.4 Windows `.CUR` File Structure
+### 10.4 Windows `.CUR` File Structure & DIB Parsing
 
 The decompressed buffer conforms to the standard Windows Cursor resource format:
 
@@ -587,8 +636,20 @@ ICONDIRENTRY Record (16 bytes per image):
   uint32_le dwImageOffset# Absolute byte offset of image data in file
 ```
 
-- **Image Resource**: Contains a `BITMAPINFOHEADER` followed by DIB color data and XOR/AND masks, or an embedded PNG file.
-- **Conversion**: The plugin decodes the bitmap into a 32-bit Cairo image surface and instantiates a native `GdkCursor` via `gdk_cursor_new_from_surface(gdk_display_get_default(), surface, wXHotspot, wYHotspot)`.
+#### DIB Decoding & Mask Reconstruction
+The image data contains a `BITMAPINFOHEADER` (40 bytes), optional color palette, XOR color bitmap, and 1-bpp AND mask bitmap:
+- Note that in Windows cursor resources, `biHeight` in `BITMAPINFOHEADER` is double the actual cursor height because it accounts for both the XOR and AND bitmaps:
+  $$\text{actual\_height} = \text{biHeight} / 2$$
+- Supported bit depths: 1, 4, 8, 16, 24, and 32 bpp.
+- **Mask Interpretation Truth Table**:
+  | AND Bit | XOR Color | Resulting Pixel Appearance |
+  |---|---|---|
+  | `0` | Color ($R, G, B$) | Opaque pixel ($A = 255$, color from XOR bitmap) |
+  | `1` | Black (`0, 0, 0`) | Fully transparent pixel ($A = 0$) |
+  | `1` | White (`255, 255, 255`) | Inverted pixel (XOR screen inversion) |
+
+- **Inverted Pixel Handling**: Because Cairo surfaces do not support XOR raster operations against underlying windows, inverted pixels (`AND=1, XOR=1`) are rendered as high-contrast black or semi-transparent dark borders to preserve visibility across white and dark backgrounds.
+- The decoded bitmap is converted into a 32-bit `CAIRO_FORMAT_ARGB32` surface and instantiated into a native `GdkCursor` via `gdk_cursor_new_from_surface(display, surface, wXHotspot, wYHotspot)`.
 
 ---
 
@@ -638,6 +699,12 @@ Byte offset:
 
 - **Unicode Text Input**: Arbitrary Unicode characters not present on a standard US keyboard can be injected using `VK_PACKET` (`0xE7`) with the UTF-16 code point in `char_code` and `scan_code = 0`.
 - **System Keys**: Keystrokes while `Alt` is pressed (e.g. `Alt+Tab`, `Alt+F4`) must use `kind = 3` (down) and `kind = 4` (up).
+- **Modifier Key Combinations (`Ctrl`, `Shift`, `Alt`)**:
+  Windows applications evaluate keyboard shortcuts (`Ctrl+A`, `Ctrl+C`, `Ctrl+V`, `Ctrl+Z`, `Shift+Arrow`) through active modifier state arrays in the Windows message queue. The client tracks and emits distinct key-down and key-up records for modifier keys:
+  - `VK_CONTROL` (`0x11`): Hardware scan code `0x1D` (Left Control) or `0xE0 0x1D` (Right Control).
+  - `VK_SHIFT` (`0x10`): Hardware scan code `0x2A` (Left Shift) or `0x36` (Right Shift).
+  - `VK_MENU` (`0x12`): Hardware scan code `0x38` (Left Alt) or `0xE0 0x38` (Right Alt / AltGr).
+  When Remmina captures shortcuts, modifier key records are forwarded synchronously ahead of character keys, enabling transparent execution of remote shortcuts.
 
 ### 11.3 Legacy Host Keyboard Limitations
 
@@ -750,26 +817,38 @@ UltraViewer implements a chunked file transfer protocol allowing bidirectional f
 
 ## 15. Computer Audio Streaming
 
+UltraViewer supports streaming remote Windows system audio to the client using ITU-T G.722 sub-band ADPCM compression.
+
 ### 15.1 Audio Activation (Command `46`)
 
-To capture and forward remote Windows system audio to the Linux client:
-- **Enable Audio**: Viewer sends UTF-16LE `"46|||-1"` (`format_flag = 1`).
-- **Disable Audio**: Viewer sends UTF-16LE `"46|||0"` (`format_flag = 1`).
+Audio streaming is negotiated on demand over the relay channel:
+- **Enable Audio Stream**: The viewer sends UTF-16LE `"46|||-1"` inside a forward envelope (`format_flag = 1`). Upon reception, the Windows host hooks the WASAPI loopback audio capture device and begins streaming encoded audio packets.
+- **Disable Audio Stream**: The viewer sends UTF-16LE `"46|||0"` (`format_flag = 1`). The host unhooks WASAPI and stops packet generation.
+- **Dynamic Mute Toggle**: Remmina exposes a toolbar feature (`UV_FEATURE_TOOL_AUDIO_TOGGLE` / `Mute/Unmute Audio`) that dispatches Command 46 to pause and resume transmission dynamically.
 
 ### 15.2 G.722 Audio Stream (Command `43`) & Silence (Command `42`)
 
-When enabled, the host transmits audio data over the relay channel:
+When active, audio is delivered via two relay commands:
 
-- **Audio Data (Command `43`)**:
-  Multipart payload (`format_flag = 0`):
-  - `part[0]`: Command byte `0x2B` (43).
-  - `part[1]`: Raw ITU-T G.722 encoded speech/audio packet (16 kHz sampling rate, 64 kbps bit rate).
-  - The client decodes G.722 frames to 16-bit linear PCM and outputs to ALSA/PulseAudio/PipeWire.
-- **Audio Silence (Command `42`)**:
-  Multipart payload:
+#### 1. Audio Data (Command `43`)
+Delivered as a multipart payload with `format_flag = 0`:
+- `part[0]`: Command byte `0x2B` (43).
+- `part[1]`: Raw ITU-T G.722 encoded speech/audio packet.
+- **Audio Stream Parameters**:
+  - Sample Rate: **16,000 Hz** (wideband).
+  - Bit Rate: **64 kbps** (Mode 1: 8 bits per sample pair / 4 bits per sub-band code).
+  - Channels: **1 (Mono)**.
+- **Decoding & Playback**:
+  - Encoded packets are decoded using an embedded ITU-T G.722 sub-band ADPCM decoder (or `libg722`).
+  - Each byte of G.722 input yields two 16-bit linear PCM samples ($16\,\text{kHz} \times 16\,\text{bit}$ signed integer, host endian).
+  - Decoded PCM samples are written directly to a low-latency PulseAudio simple playback stream (`pa_simple_new` / `pa_simple_write`) or PipeWire pulse compatibility layer.
+
+#### 2. Audio Silence (Command `42`)
+When the remote host detects absence of system audio:
+- Delivered as a multipart payload:
   - `part[0]`: Command byte `0x2A` (42).
   - `part[1]`: `int32_le` count of silence PCM bytes.
-  - Silence packets allow the client audio sink to maintain clock synchronization without advancing G.722 decoder state.
+- Rather than transmitting silent ADPCM data, the host sends the byte count. The client writes a corresponding buffer of zeroes (`0x00`) to the audio sink, preventing audio underflow and buffer underruns while avoiding decoder state drift.
 
 ---
 
