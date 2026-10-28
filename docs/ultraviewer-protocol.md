@@ -4,6 +4,9 @@ This document provides a comprehensive, wire-level reference of the UltraViewer 
 
 This reference serves as the specification for building the native `remmina-plugin-ultraviewer` client (viewer/controller mode). Hosting an UltraViewer session on Linux is treated as out of scope for the client plugin, though protocol structures relevant to bidirectional negotiation are fully documented.
 
+> [!NOTE]
+> UltraViewer is a registered trademark and product of **DucFabulous Co., Ltd.** This technical specification is an independent interoperability reference created via reverse engineering. It is not affiliated with, sponsored by, or endorsed by DucFabulous Co., Ltd.
+
 ---
 
 ## Table of Contents

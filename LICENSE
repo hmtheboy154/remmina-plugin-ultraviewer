@@ -1,3 +1,28 @@
+Remmina UltraViewer Protocol Plugin (remmina-plugin-ultraviewer)
+Copyright (C) 2026 hmtheboy154 <buingoc67@gmail.com>
+
+License Notice & Legal Disclaimers:
+-----------------------------------
+1. Code License:
+   This software is licensed under the GNU General Public License as
+   published by the Free Software Foundation; either version 2 of the
+   License, or (at your option) any later version (GPL-2.0-or-later).
+   See the full license text below.
+
+2. Proprietary Asset Exception:
+   The dictionary asset `8bit.dat` (located in assets/) is extracted from
+   the official UltraViewer installer and is the proprietary property of
+   DucFabulous Co., Ltd. It is NOT covered by or licensed under the GNU
+   General Public License.
+
+3. Trademark & Non-Endorsement Notice:
+   "UltraViewer" is a product and registered trademark of DucFabulous Co., Ltd.
+   This plugin is an independent open-source implementation developed using
+   reverse-engineered protocol documentation. This project is NOT affiliated
+   with, authorized, maintained, sponsored, or endorsed by DucFabulous Co., Ltd.
+
+==============================================================================
+
                     GNU GENERAL PUBLIC LICENSE
                        Version 2, June 1991
 

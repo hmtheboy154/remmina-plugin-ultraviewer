@@ -145,6 +145,10 @@ Special thanks to [DeanOpen's MacViewer](https://github.com/DeanOpen/MacViewer) 
 
 ---
 
-## License
+## License & Disclaimers
 
-This project is licensed under the **GNU General Public License v2.0 or later** ([GPL-2.0-or-later](LICENSE)).
+This project is licensed under the **GNU General Public License v2.0 or later** ([GPL-2.0-or-later](LICENSE)), with the following notices and exceptions:
+
+- **Proprietary Asset Exception**: The pre-shared dictionary file `8bit.dat` (in `assets/`) is extracted from the official UltraViewer installer and is the proprietary property of **DucFabulous Co., Ltd.** It is not covered by or licensed under the GNU General Public License.
+- **Trademarks**: "UltraViewer" is a registered trademark and product of **DucFabulous Co., Ltd.**
+- **Non-Endorsement Disclaimer**: This plugin is an independent open-source project developed through reverse-engineering the UltraViewer network protocol. This project is not affiliated with, sponsored by, or endorsed by **DucFabulous Co., Ltd.**

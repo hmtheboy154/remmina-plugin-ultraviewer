@@ -145,6 +145,10 @@ Xin gửi lời cảm ơn đặc biệt đến dự án [MacViewer của DeanOpe
 
 ---
 
-## Giấy phép (License)
+## Giấy phép & Tuyên bố miễn trừ trách nhiệm (License & Disclaimers)
 
-Dự án này được cấp phép theo các điều khoản của **GNU General Public License v2.0 hoặc mới hơn** ([GPL-2.0-or-later](LICENSE)).
+Dự án này được cấp phép theo các điều khoản của **GNU General Public License v2.0 hoặc mới hơn** ([GPL-2.0-or-later](LICENSE)), với các lưu ý và ngoại lệ sau:
+
+- **Ngoại lệ tệp dữ liệu độc quyền**: Tệp từ điển `8bit.dat` (trong thư mục `assets/`) được trích xuất từ bộ cài đặt chính thức của UltraViewer và là tài sản trí tuệ thuộc quyền sở hữu của **DucFabulous Co., Ltd.** Tệp này không thuộc phạm vi cấp phép của GNU General Public License.
+- **Bản quyền & Nhãn hiệu**: "UltraViewer" là nhãn hiệu và sản phẩm thuộc quyền sở hữu của **Công ty TNHH DucFabulous (DucFabulous Co., Ltd.)**.
+- **Tuyên bố không chứng thực (Non-Endorsement)**: Plugin này là một dự án phần mềm nguồn mở độc lập được phát triển thông qua việc dịch ngược (reverse engineering) giao thức mạng của UltraViewer. Dự án này hoàn toàn độc lập, không được liên kết, tài trợ hoặc chứng thực (endorsed) bởi **Công ty TNHH DucFabulous**.
