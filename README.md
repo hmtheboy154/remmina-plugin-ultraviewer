@@ -7,6 +7,9 @@
 [![License: GPL v2+](https://img.shields.io/badge/License-GPLv2%2B-blue.svg)](LICENSE)
 [![Remmina: 1.4+](https://img.shields.io/badge/Remmina-%E2%89%A51.4.0-orange.svg)](https://remmina.org/)
 [![Version: 0.2.0](https://img.shields.io/badge/Version-0.2.0-brightgreen.svg)]()
+[![AUR Version](https://img.shields.io/aur/version/remmina-plugin-ultraviewer-git?logo=archlinux&label=AUR)](https://aur.archlinux.org/packages/remmina-plugin-ultraviewer-git)
+[![OBS Build Status](https://build.opensuse.org/projects/home:hmtheboy154/packages/remmina-plugin-ultraviewer/badge.svg?type=percent)](https://software.opensuse.org/download.html?project=home%3Ahmtheboy154&package=remmina-plugin-ultraviewer)
+[![OBS Build Status Matrix](https://build.opensuse.org/projects/home:hmtheboy154/packages/remmina-plugin-ultraviewer/badge.svg?type=default)](https://build.opensuse.org/package/show/home:hmtheboy154/remmina-plugin-ultraviewer)
 
 A native, high-performance Remmina protocol plugin providing full remote desktop client connectivity to [UltraViewer](https://www.ultraviewer.net/) hosts on Linux.
 
@@ -49,6 +52,28 @@ Developed by reverse-engineering the UltraViewer wire protocol, this plugin inte
   - **Quick Connect Toolbar Integration**: Dynamically injects `ULTRAVIEWER` into Remmina's main window Quick Connect dropdown, persisting across main window closes and reopenings from the system tray.
   - **Interactive Password Prompt**: Directly prompts for the partner password on the connection screen if not pre-saved in the profile.
   - **In-Place Auth Retry**: If an incorrect password is entered, displays an auth retry panel allowing the user to re-enter credentials without terminating or restarting the connection.
+
+---
+
+## Installation (Pre-built Packages)
+
+### Arch Linux (AUR)
+
+[![AUR Package](https://img.shields.io/aur/version/remmina-plugin-ultraviewer-git?style=for-the-badge&logo=archlinux&label=AUR%20%7C%20remmina-plugin-ultraviewer-git)](https://aur.archlinux.org/packages/remmina-plugin-ultraviewer-git)
+
+Available on the [Arch User Repository (AUR)](https://aur.archlinux.org/packages/remmina-plugin-ultraviewer-git). Install using your preferred AUR helper:
+
+```bash
+yay -S remmina-plugin-ultraviewer-git
+# or
+paru -S remmina-plugin-ultraviewer-git
+```
+
+### Debian, Ubuntu, Fedora, openSUSE & Mageia (Open Build Service)
+
+[![Download from Open Build Service](https://img.shields.io/badge/Open_Build_Service-Download_Packages-73ba25?style=for-the-badge&logo=opensuse&logoColor=white)](https://software.opensuse.org/download.html?project=home%3Ahmtheboy154&package=remmina-plugin-ultraviewer)
+
+Pre-built `.deb` and `.rpm` packages and official repositories are automatically built and hosted on the **[openSUSE Open Build Service (OBS)](https://software.opensuse.org/download.html?project=home%3Ahmtheboy154&package=remmina-plugin-ultraviewer)**.
 
 ---
 

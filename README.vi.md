@@ -7,6 +7,9 @@
 [![License: GPL v2+](https://img.shields.io/badge/License-GPLv2%2B-blue.svg)](LICENSE)
 [![Remmina: 1.4+](https://img.shields.io/badge/Remmina-%E2%89%A51.4.0-orange.svg)](https://remmina.org/)
 [![Version: 0.2.0](https://img.shields.io/badge/Version-0.2.0-brightgreen.svg)]()
+[![AUR Version](https://img.shields.io/aur/version/remmina-plugin-ultraviewer-git?logo=archlinux&label=AUR)](https://aur.archlinux.org/packages/remmina-plugin-ultraviewer-git)
+[![OBS Build Status](https://build.opensuse.org/projects/home:hmtheboy154/packages/remmina-plugin-ultraviewer/badge.svg?type=percent)](https://software.opensuse.org/download.html?project=home%3Ahmtheboy154&package=remmina-plugin-ultraviewer)
+[![OBS Build Status Matrix](https://build.opensuse.org/projects/home:hmtheboy154/packages/remmina-plugin-ultraviewer/badge.svg?type=default)](https://build.opensuse.org/package/show/home:hmtheboy154/remmina-plugin-ultraviewer)
 
 Plugin giao thức Remmina native hiệu năng cao, cung cấp khả năng kết nối điều khiển máy tính từ xa tới các máy chủ [UltraViewer](https://www.ultraviewer.net/) trên Linux.
 
@@ -49,6 +52,28 @@ Plugin giao thức Remmina native hiệu năng cao, cung cấp khả năng kết
   - **Tích hợp thanh công cụ Quick Connect**: Tự động đưa giao thức `ULTRAVIEWER` vào danh sách Quick Connect trên cửa sổ chính Remmina, duy trì ngay cả khi đóng cửa sổ và mở lại từ khay hệ thống (System Tray).
   - **Hỏi mật khẩu tương tác**: Tự động hiển thị hộp thoại nhập mật khẩu đối tác trên màn hình kết nối nếu chưa lưu trước trong profile.
   - **Thử lại mật khẩu tại chỗ (In-Place Auth Retry)**: Khi nhập sai mật khẩu, Remmina sẽ yêu cầu nhập lại trực tiếp trên giao diện kết nối (tối đa 3 lần) mà không cần ngắt kết nối hay mở lại cửa sổ.
+
+---
+
+## Cài đặt nhanh (Gói đóng gói sẵn)
+
+### Arch Linux (AUR)
+
+[![AUR Package](https://img.shields.io/aur/version/remmina-plugin-ultraviewer-git?style=for-the-badge&logo=archlinux&label=AUR%20%7C%20remmina-plugin-ultraviewer-git)](https://aur.archlinux.org/packages/remmina-plugin-ultraviewer-git)
+
+Đã có mặt trên [Arch User Repository (AUR)](https://aur.archlinux.org/packages/remmina-plugin-ultraviewer-git). Bạn có thể cài đặt trực tiếp bằng AUR helper:
+
+```bash
+yay -S remmina-plugin-ultraviewer-git
+# hoặc
+paru -S remmina-plugin-ultraviewer-git
+```
+
+### Debian, Ubuntu, Fedora, openSUSE & Mageia (Open Build Service)
+
+[![Download from Open Build Service](https://img.shields.io/badge/Open_Build_Service-T%E1%BA%A3i_g%C3%B3i_c%C3%A0i_%C4%91%E1%BA%B7t-73ba25?style=for-the-badge&logo=opensuse&logoColor=white)](https://software.opensuse.org/download.html?project=home%3Ahmtheboy154&package=remmina-plugin-ultraviewer)
+
+Các gói `.deb`, `.rpm` và kho lưu trữ (repository) chính thức được biên dịch tự động trên **[openSUSE Open Build Service (OBS)](https://software.opensuse.org/download.html?project=home%3Ahmtheboy154&package=remmina-plugin-ultraviewer)**.
 
 ---
 
