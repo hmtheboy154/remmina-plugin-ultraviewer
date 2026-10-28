@@ -18,6 +18,11 @@
 #include <remmina/plugin.h>
 #include <remmina/types.h>
 
+#ifndef HAVE_REMMINA_PROTOCOL_FEATURE_TYPE_VIEWONLY
+/* Remmina < 1.4.42 compatibility: VIEWONLY was REMMINA_PROTOCOL_FEATURE_TYPE_PREF */
+#define REMMINA_PROTOCOL_FEATURE_TYPE_VIEWONLY REMMINA_PROTOCOL_FEATURE_TYPE_PREF
+#endif
+
 typedef struct {
     RemminaProtocolWidget *gp;
     GtkWidget *drawing_area;

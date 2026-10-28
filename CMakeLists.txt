@@ -20,6 +20,17 @@ if(NOT REMMINA_INCLUDE_DIR)
     message(FATAL_ERROR "Remmina plugin headers (remmina/plugin.h) not found. Please install remmina-devel or remmina.")
 endif()
 
+include(CheckCSourceCompiles)
+set(CMAKE_REQUIRED_INCLUDES ${REMMINA_INCLUDE_DIR} ${GTK3_INCLUDE_DIRS})
+check_c_source_compiles("
+    #include <remmina/plugin.h>
+    #include <remmina/types.h>
+    int main(void) {
+        int x = REMMINA_PROTOCOL_FEATURE_TYPE_VIEWONLY;
+        return (int)x;
+    }
+" HAVE_REMMINA_PROTOCOL_FEATURE_TYPE_VIEWONLY)
+
 set(SOURCES
     src/uv_crypto.c
     src/uv_wire.c
@@ -58,6 +69,10 @@ target_compile_options(remmina-plugin-ultraviewer PRIVATE
     -Wextra
     -Wno-unused-parameter
 )
+
+if(HAVE_REMMINA_PROTOCOL_FEATURE_TYPE_VIEWONLY)
+    target_compile_definitions(remmina-plugin-ultraviewer PRIVATE HAVE_REMMINA_PROTOCOL_FEATURE_TYPE_VIEWONLY)
+endif()
 
 target_link_libraries(remmina-plugin-ultraviewer PRIVATE
     ${GTK3_LIBRARIES}
