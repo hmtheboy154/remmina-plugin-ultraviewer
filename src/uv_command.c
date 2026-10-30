@@ -52,12 +52,76 @@ bool uv_identity_init(UvClientIdentity *ident)
     if (!ident) return false;
     memset(ident, 0, sizeof(*ident));
 
-    uv_random_hex(ident->device_id, 32, true);
-    uv_random_string(ident->reg_password, 8, "0123456789");
+    /* Load or persist stable device_id (32 uppercase hex) and reg_password (8 digits)
+     * in ~/.config/remmina/ultraviewer.identity so we don't register a brand-new ID
+     * on the UltraViewer server on every single connection attempt. */
+    bool loaded = false;
+    const char *cfg_dir = g_get_user_config_dir();
+    char *ident_path = NULL;
+    if (cfg_dir && *cfg_dir) {
+        char *remmina_dir = g_build_filename(cfg_dir, "remmina", NULL);
+        g_mkdir_with_parents(remmina_dir, 0700);
+        ident_path = g_build_filename(remmina_dir, "ultraviewer.identity", NULL);
+        g_free(remmina_dir);
+
+        char *contents = NULL;
+        gsize len = 0;
+        if (g_file_get_contents(ident_path, &contents, &len, NULL) && contents) {
+            char **lines = g_strsplit_set(contents, "\r\n", -1);
+            if (lines && lines[0] && lines[1] &&
+                strlen(lines[0]) == 32 && strlen(lines[1]) == 8) {
+                bool valid = true;
+                for (int i = 0; i < 32; i++) {
+                    char c = lines[0][i];
+                    if (!((c >= '0' && c <= '9') || (c >= 'A' && c <= 'F'))) valid = false;
+                }
+                for (int i = 0; i < 8; i++) {
+                    char c = lines[1][i];
+                    if (!(c >= '0' && c <= '9')) valid = false;
+                }
+                if (valid) {
+                    g_strlcpy(ident->device_id, lines[0], sizeof(ident->device_id));
+                    g_strlcpy(ident->reg_password, lines[1], sizeof(ident->reg_password));
+                    loaded = true;
+                }
+            }
+            g_strfreev(lines);
+            g_free(contents);
+        }
+    }
+
+    if (!loaded) {
+        uv_random_hex(ident->device_id, 32, true);
+        uv_random_string(ident->reg_password, 8, "0123456789");
+        if (ident_path) {
+            char *data = g_strdup_printf("%s\n%s\n", ident->device_id, ident->reg_password);
+            g_file_set_contents(ident_path, data, -1, NULL);
+            g_free(data);
+        }
+    }
+    g_free(ident_path);
 
     /* Locally administered unicast MAC derived from device ID (02:xx:xx:xx:xx:xx) */
     snprintf(ident->mac_address, sizeof(ident->mac_address), "02%.10s", ident->device_id);
     return true;
+}
+
+static char *encode_wire_username(const char *username)
+{
+    if (!username || !*username) {
+        return g_strdup("user");
+    }
+    bool clean_ascii = true;
+    for (const unsigned char *p = (const unsigned char *)username; *p; p++) {
+        if (*p < 0x20 || *p > 0x7e || *p == ':') {
+            clean_ascii = false;
+            break;
+        }
+    }
+    if (clean_ascii) {
+        return g_strdup(username);
+    }
+    return g_base64_encode((const guchar *)username, strlen(username));
 }
 
 static char *get_b64_hostname(void)
@@ -69,14 +133,49 @@ static char *get_b64_hostname(void)
     return g_base64_encode((const guchar *)host, strlen(host));
 }
 
+bool uv_parse_registration_reply(const char *reply_str, UvClientIdentity *ident, char **err_msg)
+{
+    if (err_msg) *err_msg = NULL;
+    if (!reply_str || !ident) {
+        if (err_msg) *err_msg = g_strdup("Invalid parameters for registration reply parser");
+        return false;
+    }
+
+    char **tokens = uv_split_fields(reply_str, ':', 25);
+    if (!tokens || g_strv_length(tokens) < 11 || g_strcmp0(tokens[0], "3") != 0) {
+        if (err_msg) {
+            *err_msg = g_strdup_printf("Malformed registration reply (tokens=%u, raw='%s')",
+                                       tokens ? g_strv_length(tokens) : 0, reply_str);
+        }
+        g_strfreev(tokens);
+        return false;
+    }
+
+    ident->public_port = (uint16_t)atoi(tokens[1]);
+    /* Remove leading zeros from assigned ID */
+    const char *id_tok = tokens[2];
+    while (*id_tok == '0' && *(id_tok + 1) != '\0') id_tok++;
+    g_strlcpy(ident->assigned_id, id_tok, sizeof(ident->assigned_id));
+    g_strlcpy(ident->public_ip, tokens[3], sizeof(ident->public_ip));
+    g_strlcpy(ident->server_token, tokens[10], sizeof(ident->server_token));
+
+    g_strfreev(tokens);
+
+    if (strlen(ident->assigned_id) == 0 || ident->public_port == 0) {
+        if (err_msg) *err_msg = g_strdup("Server assigned invalid ID or port");
+        return false;
+    }
+
+    return true;
+}
+
 bool uv_command_register(UvTlsSocket *sock, UvClientIdentity *ident, char **err_msg)
 {
     if (!sock || !ident) return false;
 
     char *b64_host = get_b64_hostname();
     char *local_ip = get_primary_local_ip();
-    const char *username = g_get_user_name();
-    if (!username) username = "user";
+    char *wire_user = encode_wire_username(g_get_user_name());
 
     /* UltraViewer server parses OS version as .NET System.Version:
      * Build|Major|MajorRevision|Minor|MinorRevision|Revision
@@ -106,7 +205,7 @@ bool uv_command_register(UvTlsSocket *sock, UvClientIdentity *ident, char **err_
     fields[13] = "";
     fields[14] = "0";
     fields[15] = "";
-    fields[16] = username;
+    fields[16] = wire_user;
     fields[17] = "0";
     fields[18] = "0";
     fields[19] = "0";
@@ -122,6 +221,7 @@ bool uv_command_register(UvTlsSocket *sock, UvClientIdentity *ident, char **err_
     char *cmd_str = uv_join_fields(fields, 28);
     g_free(b64_host);
     g_free(local_ip);
+    g_free(wire_user);
 
     uint8_t *ciphertext = NULL;
     size_t cipher_len = 0;
@@ -145,50 +245,44 @@ bool uv_command_register(UvTlsSocket *sock, UvClientIdentity *ident, char **err_
     }
     g_free(env);
 
-    uint8_t *reply = NULL;
-    size_t reply_len = 0;
-    if (!uv_tls_read_frame(sock, &reply, &reply_len, 10000, err_msg)) {
-        return false;
-    }
-
-    if (reply_len < 2 || reply[0] != 0x01) {
-        g_free(reply);
-        if (err_msg) *err_msg = g_strdup("Invalid registration response envelope");
-        return false;
-    }
-
-    char *reply_str = g_strndup((char *)reply + 1, reply_len - 1);
-    g_free(reply);
-
-    char **tokens = uv_split_fields(reply_str, ':', 25);
-
-    if (!tokens || g_strv_length(tokens) < 11 || g_strcmp0(tokens[0], "3") != 0) {
-        if (err_msg) {
-            *err_msg = g_strdup_printf("Malformed registration reply (tokens=%u, raw='%s')",
-                                       tokens ? g_strv_length(tokens) : 0, reply_str);
+    /* Loop until a "3:" registration reply arrives or the 20s deadline expires.
+     * The command server may push unsolicited system frames (e.g. "60:<base64>:")
+     * before or alongside the "3:" registration reply. */
+    gint64 deadline_us = g_get_monotonic_time() + (20 * G_USEC_PER_SEC);
+    while (true) {
+        gint64 remaining_us = deadline_us - g_get_monotonic_time();
+        if (remaining_us <= 0) {
+            if (err_msg) *err_msg = g_strdup("Registration timed out waiting for server reply");
+            return false;
         }
-        g_strfreev(tokens);
+        int timeout_ms = (int)(remaining_us / 1000);
+        if (timeout_ms < 100) timeout_ms = 100;
+
+        uint8_t *reply = NULL;
+        size_t reply_len = 0;
+        if (!uv_tls_read_frame(sock, &reply, &reply_len, timeout_ms, err_msg)) {
+            return false;
+        }
+
+        /* Skip empty keepalive frames or non-system envelopes */
+        if (reply_len < 2 || reply[0] != 0x01) {
+            g_free(reply);
+            continue;
+        }
+
+        char *reply_str = g_strndup((char *)reply + 1, reply_len - 1);
+        g_free(reply);
+
+        /* Skip unsolicited server commands (such as "60:...") until "3:" arrives */
+        if (!g_str_has_prefix(reply_str, "3:")) {
+            g_free(reply_str);
+            continue;
+        }
+
+        bool ok = uv_parse_registration_reply(reply_str, ident, err_msg);
         g_free(reply_str);
-        return false;
+        return ok;
     }
-    g_free(reply_str);
-
-    ident->public_port = (uint16_t)atoi(tokens[1]);
-    /* Remove leading zeros from assigned ID */
-    const char *id_tok = tokens[2];
-    while (*id_tok == '0' && *(id_tok + 1) != '\0') id_tok++;
-    g_strlcpy(ident->assigned_id, id_tok, sizeof(ident->assigned_id));
-    g_strlcpy(ident->public_ip, tokens[3], sizeof(ident->public_ip));
-    g_strlcpy(ident->server_token, tokens[10], sizeof(ident->server_token));
-
-    g_strfreev(tokens);
-
-    if (strlen(ident->assigned_id) == 0 || ident->public_port == 0) {
-        if (err_msg) *err_msg = g_strdup("Server assigned invalid ID or port");
-        return false;
-    }
-
-    return true;
 }
 
 bool uv_command_lookup(UvTlsSocket *sock, const UvClientIdentity *ident,
@@ -263,24 +357,52 @@ bool uv_command_lookup(UvTlsSocket *sock, const UvClientIdentity *ident,
     }
     g_free(env);
 
-    uint8_t *reply = NULL;
-    size_t reply_len = 0;
-    if (!uv_tls_read_frame(sock, &reply, &reply_len, 10000, err_msg)) {
-        return false;
-    }
+    /* Loop until a matching "8:" lookup reply arrives or the 20s deadline expires. */
+    gint64 deadline_us = g_get_monotonic_time() + (20 * G_USEC_PER_SEC);
+    while (true) {
+        gint64 remaining_us = deadline_us - g_get_monotonic_time();
+        if (remaining_us <= 0) {
+            if (err_msg) *err_msg = g_strdup("Partner lookup timed out waiting for server reply");
+            return false;
+        }
+        int timeout_ms = (int)(remaining_us / 1000);
+        if (timeout_ms < 100) timeout_ms = 100;
 
-    if (reply_len < 2 || reply[0] != 0x01) {
+        uint8_t *reply = NULL;
+        size_t reply_len = 0;
+        if (!uv_tls_read_frame(sock, &reply, &reply_len, timeout_ms, err_msg)) {
+            return false;
+        }
+
+        if (reply_len < 2 || reply[0] != 0x01) {
+            g_free(reply);
+            continue;
+        }
+
+        char *reply_str = g_strndup((char *)reply + 1, reply_len - 1);
         g_free(reply);
-        if (err_msg) *err_msg = g_strdup("Invalid lookup response envelope");
-        return false;
+
+        if (!g_str_has_prefix(reply_str, "8:")) {
+            g_free(reply_str);
+            continue;
+        }
+
+        char *parse_err = NULL;
+        bool res = uv_parse_lookup_reply(reply_str, corr_str, out_lookup, &parse_err);
+        g_free(reply_str);
+
+        if (!res && parse_err && strstr(parse_err, "Correlation mismatch") != NULL) {
+            g_free(parse_err);
+            continue;
+        }
+
+        if (err_msg) {
+            *err_msg = parse_err;
+        } else {
+            g_free(parse_err);
+        }
+        return res;
     }
-
-    char *reply_str = g_strndup((char *)reply + 1, reply_len - 1);
-    g_free(reply);
-
-    bool res = uv_parse_lookup_reply(reply_str, corr_str, out_lookup, err_msg);
-    g_free(reply_str);
-    return res;
 }
 
 bool uv_parse_lookup_reply(const char *reply_str, const char *expected_corr,

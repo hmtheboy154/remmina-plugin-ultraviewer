@@ -312,6 +312,32 @@ static void test_cursor_handling(void)
     printf("[✓] Cursor handling and position decoding verified.\n");
 }
 
+static void test_registration_reply_parsing(void)
+{
+    printf("[*] Testing registration reply parsing...\n");
+
+    UvClientIdentity ident;
+    memset(&ident, 0, sizeof(ident));
+    char *err_msg = NULL;
+
+    const char *ok_reg = "3:443:00111222333:203.0.113.7:unknown:1:ping-list:0:17/10/2026:relay.example:opaque-token:future:";
+    bool ok = uv_parse_registration_reply(ok_reg, &ident, &err_msg);
+    assert(ok);
+    assert(ident.public_port == 443);
+    assert(strcmp(ident.assigned_id, "111222333") == 0);
+    assert(strcmp(ident.public_ip, "203.0.113.7") == 0);
+    assert(strcmp(ident.server_token, "opaque-token") == 0);
+    assert(err_msg == NULL);
+
+    /* Non-"3:" frame (e.g. "60:...") is rejected if passed directly to parser */
+    ok = uv_parse_registration_reply("60:Q7V5Jf+8UFHUXkKYMPTL3k70A0Uv6q3sh7P4FStpsH8=:", &ident, &err_msg);
+    assert(!ok);
+    assert(err_msg != NULL);
+    g_free(err_msg);
+
+    printf("[✓] Registration reply parsing verified.\n");
+}
+
 static void test_lookup_reply_parsing(void)
 {
     UvPartnerLookup lookup;
@@ -476,6 +502,7 @@ int main(void)
     test_audio_g722();
     test_shortcuts_and_clipboard_cmd5();
     test_cursor_handling();
+    test_registration_reply_parsing();
     test_lookup_reply_parsing();
     test_screen_reinit();
     test_auth_retry_callback();

@@ -40,6 +40,8 @@ bool uv_identity_init(UvClientIdentity *ident);
 
 bool uv_command_register(UvTlsSocket *sock, UvClientIdentity *ident, char **err_msg);
 
+bool uv_parse_registration_reply(const char *reply_str, UvClientIdentity *ident, char **err_msg);
+
 bool uv_command_lookup(UvTlsSocket *sock, const UvClientIdentity *ident,
                        const char *target_id, const char *target_password,
                        UvPartnerLookup *out_lookup, char **err_msg);
