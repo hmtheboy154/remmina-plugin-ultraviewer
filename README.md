@@ -6,7 +6,7 @@
 
 [![License: GPL v2+](https://img.shields.io/badge/License-GPLv2%2B-blue.svg)](LICENSE)
 [![Remmina: 1.4+](https://img.shields.io/badge/Remmina-%E2%89%A51.4.0-orange.svg)](https://remmina.org/)
-[![Version: 0.2.1](https://img.shields.io/badge/Version-0.2.1-brightgreen.svg)]()
+[![Version: 0.2.2](https://img.shields.io/badge/Version-0.2.2-brightgreen.svg)]()
 [![AUR Version](https://img.shields.io/aur/version/remmina-plugin-ultraviewer-git?logo=archlinux&label=AUR)](https://aur.archlinux.org/packages/remmina-plugin-ultraviewer-git)
 [![OBS Build Status](https://build.opensuse.org/projects/home:hmtheboy154/packages/remmina-plugin-ultraviewer/badge.svg?type=percent)](https://software.opensuse.org/download.html?project=home%3Ahmtheboy154&package=remmina-plugin-ultraviewer)
 [![OBS Build Status Matrix](https://build.opensuse.org/projects/home:hmtheboy154/packages/remmina-plugin-ultraviewer/badge.svg?type=default)](https://build.opensuse.org/package/show/home:hmtheboy154/remmina-plugin-ultraviewer)
@@ -167,6 +167,8 @@ ctest -V
 ## Credit
 
 Special thanks to [DeanOpen's MacViewer](https://github.com/DeanOpen/MacViewer) project. Their code & documents are very helpful resources that made this project possible.
+
+Special thanks to [thehieucf's LinuxViewer](https://github.com/thehieucf/LinuxViewer) as well. Its recovered handling of UltraViewer's registration CAPTCHA (Command 60) was the reference for this plugin's CAPTCHA support.
 
 ---
 

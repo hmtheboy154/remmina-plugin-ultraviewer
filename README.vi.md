@@ -6,7 +6,7 @@
 
 [![License: GPL v2+](https://img.shields.io/badge/License-GPLv2%2B-blue.svg)](LICENSE)
 [![Remmina: 1.4+](https://img.shields.io/badge/Remmina-%E2%89%A51.4.0-orange.svg)](https://remmina.org/)
-[![Version: 0.2.1](https://img.shields.io/badge/Version-0.2.1-brightgreen.svg)]()
+[![Version: 0.2.2](https://img.shields.io/badge/Version-0.2.2-brightgreen.svg)]()
 [![AUR Version](https://img.shields.io/aur/version/remmina-plugin-ultraviewer-git?logo=archlinux&label=AUR)](https://aur.archlinux.org/packages/remmina-plugin-ultraviewer-git)
 [![OBS Build Status](https://build.opensuse.org/projects/home:hmtheboy154/packages/remmina-plugin-ultraviewer/badge.svg?type=percent)](https://software.opensuse.org/download.html?project=home%3Ahmtheboy154&package=remmina-plugin-ultraviewer)
 [![OBS Build Status Matrix](https://build.opensuse.org/projects/home:hmtheboy154/packages/remmina-plugin-ultraviewer/badge.svg?type=default)](https://build.opensuse.org/package/show/home:hmtheboy154/remmina-plugin-ultraviewer)
@@ -52,6 +52,10 @@ Plugin giao thức Remmina native hiệu năng cao, cung cấp khả năng kết
   - **Tích hợp thanh công cụ Quick Connect**: Tự động đưa giao thức `ULTRAVIEWER` vào danh sách Quick Connect trên cửa sổ chính Remmina, duy trì ngay cả khi đóng cửa sổ và mở lại từ khay hệ thống (System Tray).
   - **Hỏi mật khẩu tương tác**: Tự động hiển thị hộp thoại nhập mật khẩu đối tác trên màn hình kết nối nếu chưa lưu trước trong profile.
   - **Thử lại mật khẩu tại chỗ (In-Place Auth Retry)**: Khi nhập sai mật khẩu, Remmina sẽ yêu cầu nhập lại trực tiếp trên giao diện kết nối (tối đa 3 lần) mà không cần ngắt kết nối hay mở lại cửa sổ.
+
+- **CAPTCHA đăng ký (chống spam của UltraViewer)**:
+  - Khi server UltraViewer trả về yêu cầu CAPTCHA lúc đăng ký (Command 60), plugin mở trang xác minh của UltraViewer trong cửa sổ WebKitGTK nhúng, lấy token sau khi giải và tự động đăng ký lại.
+  - Token được lưu trong bộ nhớ suốt phiên Remmina. Cần `webkit2gtk-4.1` (hoặc `4.0`) khi build; nếu thiếu, plugin vẫn build được nhưng không giải được CAPTCHA.
 
 ---
 
@@ -167,6 +171,8 @@ ctest -V
 ## Công trạng
 
 Xin gửi lời cảm ơn đặc biệt đến dự án [MacViewer của DeanOpen](https://github.com/DeanOpen/MacViewer). Mã nguồn và tài liệu từ dự án này là những nguồn tài nguyên vô cùng hữu ích, góp phần quan trọng giúp dự án này có thể thực hiện được.
+
+Xin cảm ơn thêm [LinuxViewer của thehieucf](https://github.com/thehieucf/LinuxViewer). Phần xử lý CAPTCHA đăng ký của UltraViewer (Command 60) mà dự án này đã khôi phục là tài liệu tham khảo cho tính năng CAPTCHA của plugin.
 
 ---
 
