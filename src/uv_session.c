@@ -249,18 +249,57 @@ static gpointer uv_session_worker(gpointer user_data)
     UvSession *session = (UvSession *)user_data;
     char *err_msg = NULL;
 
-    /* 1. Connect Command Channel */
-    session->cmd_sock = uv_tls_connect(UV_DEFAULT_COMMAND_HOST, UV_DEFAULT_PORT,
-                                       UV_DEFAULT_COMMAND_HOST, session->insecure_tls, &err_msg);
-    if (!session->cmd_sock) {
-        if (session->on_closed) session->on_closed(session, err_msg, session->callback_data);
-        g_free(err_msg);
-        return NULL;
+    /* 1+2. Connect the command channel and register. When the server answers
+     * with a "60:" captcha challenge instead of a registration reply, show
+     * the captcha page and retry on a fresh connection, carrying the solved
+     * token in the next registration. */
+    if (session->captcha_token[0] == '\0') {
+        uv_captcha_get_cached_token(session->captcha_token, sizeof(session->captcha_token));
     }
 
-    /* 2. Client Registration */
-    uv_identity_init(&session->client_ident);
-    if (!uv_command_register(session->cmd_sock, &session->client_ident, &err_msg)) {
+    UvCaptchaChallenge challenge;
+    for (int reg_attempt = 0; reg_attempt < UV_MAX_CAPTCHA_RETRIES; reg_attempt++) {
+        if (!session->running) {
+            g_free(err_msg);
+            return NULL;
+        }
+        g_free(err_msg);
+        err_msg = NULL;
+        challenge.esc[0] = '\0';
+
+        if (!session->cmd_sock) {
+            session->cmd_sock = uv_tls_connect(UV_DEFAULT_COMMAND_HOST, UV_DEFAULT_PORT,
+                                               UV_DEFAULT_COMMAND_HOST, session->insecure_tls, &err_msg);
+            if (!session->cmd_sock) {
+                if (session->on_closed) session->on_closed(session, err_msg, session->callback_data);
+                g_free(err_msg);
+                return NULL;
+            }
+        }
+
+        uv_identity_init(&session->client_ident);
+        if (uv_command_register(session->cmd_sock, &session->client_ident,
+                                session->captcha_token, &challenge, &err_msg)) {
+            break;
+        }
+
+        if (challenge.esc[0] != '\0' && reg_attempt + 1 < UV_MAX_CAPTCHA_RETRIES &&
+            session->on_captcha_request && session->running) {
+            char *token = NULL;
+            if (session->on_captcha_request(session, &challenge, &token, session->callback_data) && token) {
+                g_strlcpy(session->captcha_token, token, sizeof(session->captcha_token));
+                uv_captcha_set_cached_token(token);
+                g_free(token);
+                uv_tls_close(session->cmd_sock);
+                session->cmd_sock = NULL;
+                continue;
+            }
+            g_free(token);
+            g_free(err_msg);
+            err_msg = g_strdup("Connection stopped: UltraViewer requires solving its captcha "
+                               "before this computer can connect");
+        }
+
         if (session->on_closed) session->on_closed(session, err_msg, session->callback_data);
         g_free(err_msg);
         return NULL;

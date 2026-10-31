@@ -33,6 +33,8 @@ typedef void (*UvSessionClipboardCb)(UvSession *session, const char *text, gpoin
 typedef void (*UvSessionChatCb)(UvSession *session, const char *text, gpointer user_data);
 typedef void (*UvSessionClosedCb)(UvSession *session, const char *error_msg, gpointer user_data);
 typedef bool (*UvSessionAuthRequestCb)(UvSession *session, char **out_new_password, gpointer user_data);
+typedef bool (*UvSessionCaptchaRequestCb)(UvSession *session, const UvCaptchaChallenge *challenge,
+                                          char **out_token, gpointer user_data);
 
 struct _UvSession {
     /* Credentials & Connection Params */
@@ -57,6 +59,10 @@ struct _UvSession {
     UvClientIdentity client_ident;
     UvPartnerLookup partner_lookup;
     char connection_hash[17];
+
+    /* Captcha token from UltraViewer's verification page, kept for this run
+     * and carried by every registration until the session ends. */
+    char captcha_token[UV_CAPTCHA_TOKEN_MAX + 1];
 
     /* Subsystems */
     UvScreenRenderer *renderer;
@@ -83,6 +89,7 @@ struct _UvSession {
     UvSessionChatCb on_chat_received;
     UvSessionClosedCb on_closed;
     UvSessionAuthRequestCb on_auth_request;
+    UvSessionCaptchaRequestCb on_captcha_request;
     gpointer callback_data;
 };
 

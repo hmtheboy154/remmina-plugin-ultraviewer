@@ -702,6 +702,22 @@ static bool uv_session_auth_request_cb(UvSession *session, char **out_new_passwo
     return true;
 }
 
+static bool uv_session_captcha_request_cb(UvSession *session, const UvCaptchaChallenge *challenge,
+                                          char **out_token, gpointer user_data)
+{
+    (void)session;
+    RemminaPluginUltraviewerData *gpdata = (RemminaPluginUltraviewerData *)user_data;
+    if (!gpdata || !challenge) return false;
+
+    /* Blocks the worker until the window closes; all UI runs on the GTK
+     * main loop. */
+    char *token = uv_captcha_request_token(challenge, gpdata->gp);
+    if (!token) return false;
+
+    *out_token = token;
+    return true;
+}
+
 static void remmina_plugin_ultraviewer_free(RemminaPluginUltraviewerData *gpdata)
 {
     if (!gpdata) return;
@@ -901,6 +917,7 @@ static gboolean remmina_plugin_ultraviewer_open_connection(RemminaProtocolWidget
     gpdata->session->on_chat_received = uv_session_chat_cb;
     gpdata->session->on_closed = uv_session_closed_cb;
     gpdata->session->on_auth_request = uv_session_auth_request_cb;
+    gpdata->session->on_captcha_request = uv_session_captcha_request_cb;
 
     return uv_session_start(gpdata->session);
 }
@@ -911,6 +928,10 @@ static gboolean remmina_plugin_ultraviewer_close_connection(RemminaProtocolWidge
     if (!gpdata) return FALSE;
 
     gpdata->user_cancelled = true;
+
+    /* If the worker is waiting for the captcha window, dismiss it so the
+     * registration loop unblocks. */
+    uv_captcha_cancel_dialog(gp);
 
     if (gpdata->clipboard_handler) {
         g_signal_handler_disconnect(G_OBJECT(gtk_clipboard_get(GDK_SELECTION_CLIPBOARD)), gpdata->clipboard_handler);
@@ -1143,7 +1164,7 @@ static RemminaProtocolPlugin remmina_plugin_ultraviewer = {
     .name = "ULTRAVIEWER",
     .description = "UltraViewer - Remote Desktop Client Plugin",
     .domain = "remmina-plugin-ultraviewer",
-    .version = "0.2.1",
+    .version = "0.2.2",
     .icon_name = "remmina-ultraviewer",
     .icon_name_ssh = "remmina-ultraviewer-ssh",
     .basic_settings = remmina_plugin_ultraviewer_basic_settings,

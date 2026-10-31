@@ -13,6 +13,14 @@ pkg_check_modules(ZSTD REQUIRED libzstd)
 pkg_check_modules(JPEG REQUIRED libjpeg)
 pkg_check_modules(PULSE REQUIRED libpulse-simple)
 
+# Captcha support: enter_captcha.aspx is shown in an embedded WebKit view.
+# Without it the plugin still builds, but the server's captcha challenge
+# cannot be solved and the connection fails with an explanatory error.
+pkg_check_modules(WEBKIT webkit2gtk-4.1)
+if(NOT WEBKIT_FOUND)
+    pkg_check_modules(WEBKIT webkit2gtk-4.0)
+endif()
+
 find_path(REMMINA_INCLUDE_DIR remmina/plugin.h
     PATHS /usr/include /usr/local/include
 )
@@ -35,6 +43,7 @@ set(SOURCES
     src/uv_crypto.c
     src/uv_wire.c
     src/uv_tls.c
+    src/uv_captcha.c
     src/uv_command.c
     src/uv_screen.c
     src/uv_cursor.c
@@ -72,6 +81,17 @@ target_compile_options(remmina-plugin-ultraviewer PRIVATE
 
 if(HAVE_REMMINA_PROTOCOL_FEATURE_TYPE_VIEWONLY)
     target_compile_definitions(remmina-plugin-ultraviewer PRIVATE HAVE_REMMINA_PROTOCOL_FEATURE_TYPE_VIEWONLY)
+endif()
+
+if(WEBKIT_FOUND)
+    target_compile_definitions(remmina-plugin-ultraviewer PRIVATE UV_HAVE_WEBKIT)
+    target_include_directories(remmina-plugin-ultraviewer PRIVATE ${WEBKIT_INCLUDE_DIRS})
+    target_compile_options(remmina-plugin-ultraviewer PRIVATE ${WEBKIT_CFLAGS_OTHER})
+    target_link_directories(remmina-plugin-ultraviewer PRIVATE ${WEBKIT_LIBRARY_DIRS})
+    target_link_libraries(remmina-plugin-ultraviewer PRIVATE ${WEBKIT_LIBRARIES})
+    message(STATUS "UltraViewer plugin: captcha support enabled via ${WEBKIT_LIBRARIES}")
+else()
+    message(WARNING "UltraViewer plugin: webkit2gtk-4.1 not found, captcha solving is disabled")
 endif()
 
 target_link_libraries(remmina-plugin-ultraviewer PRIVATE
@@ -114,6 +134,7 @@ add_executable(test_ultraviewer
     src/uv_cursor.c
     src/uv_audio.c
     src/uv_file_transfer.c
+    src/uv_captcha.c
     src/uv_command.c
     src/uv_screen.c
 )

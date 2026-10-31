@@ -13,6 +13,7 @@
 #include "uv_command.h"
 #include "uv_crypto.h"
 #include "uv_wire.h"
+#include "uv_captcha.h"
 #include <sys/utsname.h>
 #include <sys/socket.h>
 #include <netinet/in.h>
@@ -169,9 +170,13 @@ bool uv_parse_registration_reply(const char *reply_str, UvClientIdentity *ident,
     return true;
 }
 
-bool uv_command_register(UvTlsSocket *sock, UvClientIdentity *ident, char **err_msg)
+bool uv_command_register(UvTlsSocket *sock, UvClientIdentity *ident,
+                         const char *captcha_token,
+                         UvCaptchaChallenge *out_captcha, char **err_msg)
 {
     if (!sock || !ident) return false;
+    if (err_msg) *err_msg = NULL;
+    if (out_captcha) memset(out_captcha, 0, sizeof(*out_captcha));
 
     char *b64_host = get_b64_hostname();
     char *local_ip = get_primary_local_ip();
@@ -216,7 +221,9 @@ bool uv_command_register(UvTlsSocket *sock, UvClientIdentity *ident, char **err_
     fields[24] = "0";
     fields[25] = "";
     fields[26] = "";
-    fields[27] = "";
+    /* Desktop global 0x7e21dc: the token from UltraViewer's captcha page,
+     * empty until one is solved. */
+    fields[27] = captcha_token ? captcha_token : "";
 
     char *cmd_str = uv_join_fields(fields, 28);
     g_free(b64_host);
@@ -246,13 +253,20 @@ bool uv_command_register(UvTlsSocket *sock, UvClientIdentity *ident, char **err_
     g_free(env);
 
     /* Loop until a "3:" registration reply arrives or the 20s deadline expires.
-     * The command server may push unsolicited system frames (e.g. "60:<base64>:")
-     * before or alongside the "3:" registration reply. */
+     * When the service wants a person to solve a captcha first, it answers
+     * with "60:<esc>:<extra>" instead of the "3:" reply; report that
+     * immediately via out_captcha. */
     gint64 deadline_us = g_get_monotonic_time() + (20 * G_USEC_PER_SEC);
+    bool seen_challenge = false;
     while (true) {
         gint64 remaining_us = deadline_us - g_get_monotonic_time();
         if (remaining_us <= 0) {
-            if (err_msg) *err_msg = g_strdup("Registration timed out waiting for server reply");
+            if (err_msg) {
+                *err_msg = g_strdup(seen_challenge
+                    ? "UltraViewer server sent a challenge (frame 60) instead of registering this client, "
+                      "most likely a CAPTCHA/rate-limit for this IP. Try again later or from another network."
+                    : "Registration timed out waiting for server reply");
+            }
             return false;
         }
         int timeout_ms = (int)(remaining_us / 1000);
@@ -260,7 +274,19 @@ bool uv_command_register(UvTlsSocket *sock, UvClientIdentity *ident, char **err_
 
         uint8_t *reply = NULL;
         size_t reply_len = 0;
-        if (!uv_tls_read_frame(sock, &reply, &reply_len, timeout_ms, err_msg)) {
+        char *read_err = NULL;
+        if (!uv_tls_read_frame(sock, &reply, &reply_len, timeout_ms, &read_err)) {
+            if (seen_challenge) {
+                g_free(read_err);
+                if (err_msg) {
+                    *err_msg = g_strdup("UltraViewer server sent a challenge (frame 60) instead of registering this client, "
+                                        "most likely a CAPTCHA/rate-limit for this IP. Try again later or from another network.");
+                }
+            } else if (err_msg) {
+                *err_msg = read_err;
+            } else {
+                g_free(read_err);
+            }
             return false;
         }
 
@@ -272,6 +298,19 @@ bool uv_command_register(UvTlsSocket *sock, UvClientIdentity *ident, char **err_
 
         char *reply_str = g_strndup((char *)reply + 1, reply_len - 1);
         g_free(reply);
+
+        /* A captcha challenge replaces the registration reply: report it and
+         * let the caller solve it before registering again. */
+        if (g_str_has_prefix(reply_str, "60:")) {
+            if (out_captcha && uv_captcha_parse_challenge(reply_str, out_captcha)) {
+                g_free(reply_str);
+                if (err_msg) {
+                    *err_msg = g_strdup("UltraViewer requires solving a captcha before this computer can connect");
+                }
+                return false;
+            }
+            seen_challenge = true;
+        }
 
         /* Skip unsolicited server commands (such as "60:...") until "3:" arrives */
         if (!g_str_has_prefix(reply_str, "3:")) {

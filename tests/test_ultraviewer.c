@@ -338,6 +338,51 @@ static void test_registration_reply_parsing(void)
     printf("[✓] Registration reply parsing verified.\n");
 }
 
+static void test_captcha_challenge(void)
+{
+    printf("[*] Testing registration captcha challenge (command 60)...\n");
+
+    UvCaptchaChallenge challenge;
+    bool ok = uv_captcha_parse_challenge("60:FhLx/ve3+W4M=:", &challenge);
+    assert(ok);
+    assert(strcmp(challenge.esc, "FhLx/ve3+W4M=") == 0);
+    assert(strcmp(challenge.extra, "") == 0);
+
+    char *url_vi = uv_captcha_build_url_for_lang(&challenge, "vi");
+    assert(url_vi != NULL);
+    assert(strcmp(url_vi,
+                  "https://www.ultraviewer.net/api/enter_captcha.aspx?lang=vi&version=6.6.133&extra=&esc=FhLx%2Fve3%2BW4M%3D") == 0);
+    g_free(url_vi);
+
+    assert(uv_captcha_parse_challenge("60:abc", &challenge));
+    assert(strcmp(challenge.esc, "abc") == 0);
+    assert(strcmp(challenge.extra, "") == 0);
+
+    assert(uv_captcha_parse_challenge("60:abc:x y", &challenge));
+    char *url_en = uv_captcha_build_url_for_lang(&challenge, "en");
+    assert(url_en != NULL);
+    assert(strstr(url_en, "&extra=x%20y&esc=abc") != NULL);
+    g_free(url_en);
+
+    assert(!uv_captcha_parse_challenge("3:abc:", &challenge));
+    assert(!uv_captcha_parse_challenge("60::", &challenge));
+    assert(!uv_captcha_parse_challenge("60:a\x01b:", &challenge));
+
+    assert(uv_captcha_token_valid("A1b2-C3"));
+    assert(!uv_captcha_token_valid(""));
+    assert(!uv_captcha_token_valid("a:b"));
+
+    char cached[64];
+    uv_captcha_set_cached_token("SolvedToken123");
+    uv_captcha_get_cached_token(cached, sizeof(cached));
+    assert(strcmp(cached, "SolvedToken123") == 0);
+    uv_captcha_set_cached_token(NULL);
+    uv_captcha_get_cached_token(cached, sizeof(cached));
+    assert(strcmp(cached, "") == 0);
+
+    printf("[✓] Registration captcha challenge verified.\n");
+}
+
 static void test_lookup_reply_parsing(void)
 {
     UvPartnerLookup lookup;
@@ -503,6 +548,7 @@ int main(void)
     test_shortcuts_and_clipboard_cmd5();
     test_cursor_handling();
     test_registration_reply_parsing();
+    test_captcha_challenge();
     test_lookup_reply_parsing();
     test_screen_reinit();
     test_auth_retry_callback();

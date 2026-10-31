@@ -15,6 +15,7 @@
 
 #include "uv_types.h"
 #include "uv_tls.h"
+#include "uv_captcha.h"
 
 typedef struct {
     char device_id[33];
@@ -38,7 +39,14 @@ typedef struct {
 
 bool uv_identity_init(UvClientIdentity *ident);
 
-bool uv_command_register(UvTlsSocket *sock, UvClientIdentity *ident, char **err_msg);
+/* Registers this client (command 3). captcha_token is the value obtained by
+ * solving a previous captcha challenge (empty string when none is known).
+ * When the server instead answers with a "60:" captcha challenge, it is
+ * parsed into *out_captcha (when non-NULL) and false is returned with an
+ * err_msg describing the requirement. */
+bool uv_command_register(UvTlsSocket *sock, UvClientIdentity *ident,
+                         const char *captcha_token,
+                         UvCaptchaChallenge *out_captcha, char **err_msg);
 
 bool uv_parse_registration_reply(const char *reply_str, UvClientIdentity *ident, char **err_msg);
 

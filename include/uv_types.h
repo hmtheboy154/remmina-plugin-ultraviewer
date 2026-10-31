@@ -38,6 +38,19 @@
 #define UV_SNI_LABEL            "ultraviewer"
 #define UV_CLIENT_VERSION       "6.6.133"
 
+/* Version string embedded in the captcha page URL
+ * (enter_captcha.aspx?version=...). The server rejects token requests that
+ * name a version it no longer serves, so it may drift apart from
+ * UV_CLIENT_VERSION. Defaults to UV_CLIENT_VERSION; override with
+ * -DUV_CAPTCHA_VERSION='"X.Y.Z"' or edit here. */
+#ifndef UV_CAPTCHA_VERSION
+#define UV_CAPTCHA_VERSION UV_CLIENT_VERSION
+#endif
+
+#define UV_CAPTCHA_PAGE         "https://www.ultraviewer.net/api/enter_captcha.aspx"
+#define UV_CAPTCHA_TOKEN_MAX    4096
+#define UV_MAX_CAPTCHA_RETRIES  3
+
 static inline uint16_t uv_read_u16_le(const uint8_t *p)
 {
     return (uint16_t)p[0] | ((uint16_t)p[1] << 8);
