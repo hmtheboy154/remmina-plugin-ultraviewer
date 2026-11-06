@@ -6,7 +6,7 @@
 
 [![License: GPL v2+](https://img.shields.io/badge/License-GPLv2%2B-blue.svg)](LICENSE)
 [![Remmina: 1.4+](https://img.shields.io/badge/Remmina-%E2%89%A51.4.0-orange.svg)](https://remmina.org/)
-[![Version: 0.2.2](https://img.shields.io/badge/Version-0.2.2-brightgreen.svg)]()
+[![Version: 0.2.3](https://img.shields.io/badge/Version-0.2.3-brightgreen.svg)]()
 [![AUR Version](https://img.shields.io/aur/version/remmina-plugin-ultraviewer-git?logo=archlinux&label=AUR)](https://aur.archlinux.org/packages/remmina-plugin-ultraviewer-git)
 [![OBS Build Status](https://build.opensuse.org/projects/home:hmtheboy154/packages/remmina-plugin-ultraviewer/badge.svg?type=percent)](https://software.opensuse.org/download.html?project=home%3Ahmtheboy154&package=remmina-plugin-ultraviewer)
 [![OBS Build Status Matrix](https://build.opensuse.org/projects/home:hmtheboy154/packages/remmina-plugin-ultraviewer/badge.svg?type=default)](https://build.opensuse.org/package/show/home:hmtheboy154/remmina-plugin-ultraviewer)
@@ -54,7 +54,8 @@ Plugin giao thức Remmina native hiệu năng cao, cung cấp khả năng kết
   - **Thử lại mật khẩu tại chỗ (In-Place Auth Retry)**: Khi nhập sai mật khẩu, Remmina sẽ yêu cầu nhập lại trực tiếp trên giao diện kết nối (tối đa 3 lần) mà không cần ngắt kết nối hay mở lại cửa sổ.
 
 - **CAPTCHA đăng ký (chống spam của UltraViewer)**:
-  - Khi server UltraViewer trả về yêu cầu CAPTCHA lúc đăng ký (Command 60), plugin mở trang xác minh của UltraViewer trong cửa sổ WebKitGTK nhúng, lấy token sau khi giải và tự động đăng ký lại.
+  - Khi server UltraViewer trả về yêu cầu CAPTCHA lúc đăng ký (Command 60), plugin mở trang xác minh của UltraViewer trong cửa sổ WebKitGTK nhúng, giả lập môi trường trình duyệt của bản Windows và duy trì kết nối command bằng keepalive định kỳ.
+  - Quá trình xác minh thường tự hoàn tất sau vài giây mà không cần gõ mã thủ công. Sau khi có token, plugin tự động đăng ký lại ngay trên kết nối đang mở.
   - Token được lưu trong bộ nhớ suốt phiên Remmina. Cần `webkit2gtk-4.1` (hoặc `4.0`) khi build; nếu thiếu, plugin vẫn build được nhưng không giải được CAPTCHA.
 
 ---

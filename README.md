@@ -6,7 +6,7 @@
 
 [![License: GPL v2+](https://img.shields.io/badge/License-GPLv2%2B-blue.svg)](LICENSE)
 [![Remmina: 1.4+](https://img.shields.io/badge/Remmina-%E2%89%A51.4.0-orange.svg)](https://remmina.org/)
-[![Version: 0.2.2](https://img.shields.io/badge/Version-0.2.2-brightgreen.svg)]()
+[![Version: 0.2.3](https://img.shields.io/badge/Version-0.2.3-brightgreen.svg)]()
 [![AUR Version](https://img.shields.io/aur/version/remmina-plugin-ultraviewer-git?logo=archlinux&label=AUR)](https://aur.archlinux.org/packages/remmina-plugin-ultraviewer-git)
 [![OBS Build Status](https://build.opensuse.org/projects/home:hmtheboy154/packages/remmina-plugin-ultraviewer/badge.svg?type=percent)](https://software.opensuse.org/download.html?project=home%3Ahmtheboy154&package=remmina-plugin-ultraviewer)
 [![OBS Build Status Matrix](https://build.opensuse.org/projects/home:hmtheboy154/packages/remmina-plugin-ultraviewer/badge.svg?type=default)](https://build.opensuse.org/package/show/home:hmtheboy154/remmina-plugin-ultraviewer)
@@ -52,6 +52,11 @@ Developed by reverse-engineering the UltraViewer wire protocol, this plugin inte
   - **Quick Connect Toolbar Integration**: Dynamically injects `ULTRAVIEWER` into Remmina's main window Quick Connect dropdown, persisting across main window closes and reopenings from the system tray.
   - **Interactive Password Prompt**: Directly prompts for the partner password on the connection screen if not pre-saved in the profile.
   - **In-Place Auth Retry**: If an incorrect password is entered, displays an auth retry panel allowing the user to re-enter credentials without terminating or restarting the connection.
+
+- **Registration CAPTCHA (UltraViewer Anti-Spam)**:
+  - When the UltraViewer command server challenges registration with a CAPTCHA (Command 60), the plugin opens UltraViewer's verification page in an embedded WebKitGTK dialog, emulates the legacy Windows client's browser environment, and keeps the command connection alive with periodic keepalives.
+  - Verification usually completes automatically in a few seconds without requiring manual typing. Once verified, the plugin captures the session token and transparently retries registration on the same connection.
+  - The solved token is cached in memory across the Remmina session. Requires `webkit2gtk-4.1` (or `4.0`) at build time; without it, the plugin still builds but cannot solve the challenge.
 
 ---
 

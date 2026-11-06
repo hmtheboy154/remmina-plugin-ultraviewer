@@ -160,13 +160,15 @@ add_test(NAME test_ultraviewer COMMAND test_ultraviewer)
 set(SESSION_TEST_SOURCES ${SOURCES})
 list(REMOVE_ITEM SESSION_TEST_SOURCES src/uv_plugin.c)
 add_executable(test_session_registration tests/test_session_registration.c ${SESSION_TEST_SOURCES})
+set_property(TARGET test_session_registration PROPERTY INTERPROCEDURAL_OPTIMIZATION FALSE)
 target_include_directories(test_session_registration PRIVATE
     $<TARGET_PROPERTY:remmina-plugin-ultraviewer,INCLUDE_DIRECTORIES>)
-target_compile_options(test_session_registration PRIVATE ${GTK3_CFLAGS_OTHER} -UNDEBUG)
+target_compile_options(test_session_registration PRIVATE ${GTK3_CFLAGS_OTHER} -UNDEBUG -fno-lto)
 target_link_libraries(test_session_registration PRIVATE
     $<TARGET_PROPERTY:remmina-plugin-ultraviewer,LINK_LIBRARIES>)
 target_link_directories(test_session_registration PRIVATE ${WEBKIT_LIBRARY_DIRS})
 target_link_options(test_session_registration PRIVATE
+    -fno-lto
     -Wl,--wrap=uv_tls_connect -Wl,--wrap=uv_tls_close -Wl,--wrap=uv_tls_write_frame
     -Wl,--wrap=uv_command_register -Wl,--wrap=uv_command_lookup -Wl,--wrap=uv_identity_init)
 add_test(NAME test_session_registration COMMAND test_session_registration)
