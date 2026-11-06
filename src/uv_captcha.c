@@ -175,6 +175,10 @@ static const char *captcha_bridge_js =
     "    has: function () { return true; }\n"
     "  });\n"
     "  try { Object.defineProperty(window, 'external', { value: external, configurable: true }); } catch (e) {}\n"
+    /* The page derives a hidden field from whether String.prototype.includes
+     * exists, and the server expects the value of the Windows client's IE
+     * control, which has no includes. A mismatch rejects even a correct code. */
+    "  try { delete String.prototype.includes; } catch (e) {}\n"
     "})();\n";
 
 typedef struct {
@@ -334,8 +338,8 @@ static gboolean captcha_dialog_idle(gpointer user_data)
 
     GtkWidget *hint = gtk_label_new(_(
         "UltraViewer needs to verify this computer before it lets it connect.\n"
-        "Type the characters shown on the page. When the page accepts them,\n"
-        "this window closes and the connection resumes automatically."));
+        "This usually completes on its own in a few seconds. If the page asks,\n"
+        "type the characters shown; this window then closes automatically."));
     gtk_label_set_line_wrap(GTK_LABEL(hint), TRUE);
     gtk_widget_set_halign(hint, GTK_ALIGN_START);
     gtk_widget_set_margin_start(hint, 12);
@@ -397,7 +401,8 @@ static gboolean captcha_dialog_idle(gpointer user_data)
     return G_SOURCE_REMOVE;
 }
 
-char *uv_captcha_request_token(const UvCaptchaChallenge *challenge, gpointer parent_widget)
+char *uv_captcha_request_token(const UvCaptchaChallenge *challenge, gpointer parent_widget,
+                               void (*on_wait)(gpointer), gpointer wait_data)
 {
     if (!challenge) return NULL;
 
@@ -416,8 +421,14 @@ char *uv_captcha_request_token(const UvCaptchaChallenge *challenge, gpointer par
     g_main_context_invoke(NULL, captcha_dialog_idle, ui);
 
     g_mutex_lock(&ui->lock);
+    gint64 next_keepalive = g_get_monotonic_time() + 30 * G_USEC_PER_SEC;
     while (!ui->done) {
-        g_cond_wait(&ui->cond, &ui->lock);
+        if (!g_cond_wait_until(&ui->cond, &ui->lock, next_keepalive) && !ui->done) {
+            g_mutex_unlock(&ui->lock);
+            if (on_wait) on_wait(wait_data);
+            g_mutex_lock(&ui->lock);
+            next_keepalive = g_get_monotonic_time() + 30 * G_USEC_PER_SEC;
+        }
     }
     char *token = ui->got_token ? g_strdup(ui->token) : NULL;
     g_mutex_unlock(&ui->lock);
@@ -461,10 +472,13 @@ void uv_captcha_cancel_dialog(gpointer owner)
 
 #else /* !UV_HAVE_WEBKIT */
 
-char *uv_captcha_request_token(const UvCaptchaChallenge *challenge, gpointer parent_widget)
+char *uv_captcha_request_token(const UvCaptchaChallenge *challenge, gpointer parent_widget,
+                               void (*on_wait)(gpointer), gpointer wait_data)
 {
     (void)challenge;
     (void)parent_widget;
+    (void)on_wait;
+    (void)wait_data;
     g_warning("UltraViewer asks for a captcha, but this build has no WebKit support. "
               "Rebuild the plugin with webkit2gtk-4.1 installed.");
     return NULL;
