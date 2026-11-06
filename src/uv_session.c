@@ -244,6 +244,30 @@ static void drain_outbound_queue(UvSession *session)
     }
 }
 
+static bool send_command_keepalive(UvTlsSocket *sock)
+{
+    uint8_t *ct = NULL;
+    size_t ct_len = 0;
+    if (!uv_server_cipher_encrypt((const uint8_t *)"2", 1, &ct, &ct_len)) return false;
+
+    uint8_t *env = NULL;
+    size_t env_len = 0;
+    bool ok = uv_system_envelope_encode(ct, ct_len, true, &env, &env_len);
+    g_free(ct);
+    if (ok) ok = uv_tls_write_frame(sock, env, env_len);
+    g_free(env);
+    return ok;
+}
+
+void uv_session_captcha_keepalive(gpointer user_data)
+{
+    UvSession *session = (UvSession *)user_data;
+    if (!session || !session->running || !session->cmd_sock) return;
+
+    /* Registration handles a failed connection once the dialog returns. */
+    send_command_keepalive(session->cmd_sock);
+}
+
 static gpointer uv_session_worker(gpointer user_data)
 {
     UvSession *session = (UvSession *)user_data;
@@ -251,13 +275,14 @@ static gpointer uv_session_worker(gpointer user_data)
 
     /* 1+2. Connect the command channel and register. When the server answers
      * with a "60:" captcha challenge instead of a registration reply, show
-     * the captcha page and retry on a fresh connection, carrying the solved
-     * token in the next registration. */
+     * the captcha page and register again on the same connection with the
+     * solved token. Reconnect only if that connection has been lost. */
     if (session->captcha_token[0] == '\0') {
         uv_captcha_get_cached_token(session->captcha_token, sizeof(session->captcha_token));
     }
 
     UvCaptchaChallenge challenge;
+    bool retry_captcha_connection = false;
     for (int reg_attempt = 0; reg_attempt < UV_MAX_CAPTCHA_RETRIES; reg_attempt++) {
         if (!session->running) {
             g_free(err_msg);
@@ -283,6 +308,14 @@ static gpointer uv_session_worker(gpointer user_data)
             break;
         }
 
+        if (retry_captcha_connection && challenge.esc[0] == '\0' &&
+            reg_attempt + 1 < UV_MAX_CAPTCHA_RETRIES && session->running) {
+            retry_captcha_connection = false;
+            uv_tls_close(session->cmd_sock);
+            session->cmd_sock = NULL;
+            continue;
+        }
+
         if (challenge.esc[0] != '\0' && reg_attempt + 1 < UV_MAX_CAPTCHA_RETRIES &&
             session->on_captcha_request && session->running) {
             char *token = NULL;
@@ -290,8 +323,7 @@ static gpointer uv_session_worker(gpointer user_data)
                 g_strlcpy(session->captcha_token, token, sizeof(session->captcha_token));
                 uv_captcha_set_cached_token(token);
                 g_free(token);
-                uv_tls_close(session->cmd_sock);
-                session->cmd_sock = NULL;
+                retry_captcha_connection = true;
                 continue;
             }
             g_free(token);
@@ -617,16 +649,7 @@ static gpointer uv_session_worker(gpointer user_data)
 
         /* 60-second Command Keepalive (3DES("2")) */
         if (now - session->last_cmd_keepalive_time >= 60 * G_USEC_PER_SEC) {
-            uint8_t *ct = NULL;
-            size_t ct_len = 0;
-            if (uv_server_cipher_encrypt((const uint8_t *)"2", 1, &ct, &ct_len)) {
-                uint8_t *cmd_env = NULL;
-                size_t cmd_env_len = 0;
-                uv_system_envelope_encode(ct, ct_len, true, &cmd_env, &cmd_env_len);
-                g_free(ct);
-                uv_tls_write_frame(session->cmd_sock, cmd_env, cmd_env_len);
-                g_free(cmd_env);
-            }
+            send_command_keepalive(session->cmd_sock);
             session->last_cmd_keepalive_time = now;
         }
     }

@@ -705,13 +705,13 @@ static bool uv_session_auth_request_cb(UvSession *session, char **out_new_passwo
 static bool uv_session_captcha_request_cb(UvSession *session, const UvCaptchaChallenge *challenge,
                                           char **out_token, gpointer user_data)
 {
-    (void)session;
     RemminaPluginUltraviewerData *gpdata = (RemminaPluginUltraviewerData *)user_data;
     if (!gpdata || !challenge) return false;
 
     /* Blocks the worker until the window closes; all UI runs on the GTK
      * main loop. */
-    char *token = uv_captcha_request_token(challenge, gpdata->gp);
+    char *token = uv_captcha_request_token(challenge, gpdata->gp,
+                                          uv_session_captcha_keepalive, session);
     if (!token) return false;
 
     *out_token = token;

@@ -46,10 +46,12 @@ void uv_captcha_set_cached_token(const char *token);
 
 /* Shows the captcha page in a modal GTK window and blocks the calling
  * (worker) thread until it is solved or dismissed. All UI work runs on the
- * GTK main loop; parent_widget is a GtkWidget used to find the transient
+ * GTK main loop; on_wait runs on the waiting worker every 30 seconds.
+ * parent_widget is a GtkWidget used to find the transient
  * parent window (may be NULL). Returns a g_free()-able token, or NULL when
  * dismissed or when this build has no WebKit support. */
-char *uv_captcha_request_token(const UvCaptchaChallenge *challenge, gpointer parent_widget);
+char *uv_captcha_request_token(const UvCaptchaChallenge *challenge, gpointer parent_widget,
+                               void (*on_wait)(gpointer), gpointer wait_data);
 
 /* Closes the captcha window(s) opened for the connection identified by
  * owner (the parent_widget passed to uv_captcha_request_token()), so a

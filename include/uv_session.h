@@ -107,6 +107,8 @@ bool uv_session_start(UvSession *session);
 
 void uv_session_stop(UvSession *session);
 
+void uv_session_captcha_keepalive(gpointer user_data);
+
 void uv_session_queue_outbound(UvSession *session, bool format_flag, const uint8_t *payload, size_t len);
 
 void uv_session_send_chat(UvSession *session, const char *text);
