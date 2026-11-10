@@ -15,6 +15,7 @@
 
 #include "uv_types.h"
 #include <cairo.h>
+#include <gdk-pixbuf/gdk-pixbuf.h>
 #include <zstd.h>
 #include <jpeglib.h>
 
@@ -72,6 +73,8 @@ typedef struct {
 
 UvScreenRenderer *uv_screen_renderer_new(const UvScreenInit *init, const char *custom_dict_path);
 void uv_screen_renderer_free(UvScreenRenderer *renderer);
+
+cairo_filter_t uv_screen_scale_filter(GdkInterpType quality);
 
 bool uv_parse_screen_init(const GArray *parts, UvScreenInit *out_init, char **err_msg);
 

@@ -13,6 +13,18 @@
 #include "uv_screen.h"
 #include "uv_wire.h"
 
+cairo_filter_t uv_screen_scale_filter(GdkInterpType quality)
+{
+    /* Remmina's GdkInterpType values differ from Cairo's filter values. */
+    switch (quality) {
+    case GDK_INTERP_NEAREST: return CAIRO_FILTER_NEAREST;
+    case GDK_INTERP_TILES: return CAIRO_FILTER_GOOD;
+    case GDK_INTERP_BILINEAR: return CAIRO_FILTER_BILINEAR;
+    case GDK_INTERP_HYPER:
+    default: return CAIRO_FILTER_BEST;
+    }
+}
+
 static inline uint32_t rgb555_to_xrgb8888(uint16_t v)
 {
     /* RGB555: bit 0..4 = Blue, bit 5..9 = Green, bit 10..14 = Red (Windows GDI / UltraViewer wire) */

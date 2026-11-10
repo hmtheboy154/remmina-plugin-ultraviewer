@@ -468,6 +468,42 @@ static void test_lookup_reply_parsing(void)
     printf("[✓] Lookup reply parsing and error reporting verified.\n");
 }
 
+static void test_screen_scale_filter(void)
+{
+    assert(uv_screen_scale_filter(GDK_INTERP_NEAREST) == CAIRO_FILTER_NEAREST);
+    assert(uv_screen_scale_filter(GDK_INTERP_TILES) == CAIRO_FILTER_GOOD);
+    assert(uv_screen_scale_filter(GDK_INTERP_BILINEAR) == CAIRO_FILTER_BILINEAR);
+    assert(uv_screen_scale_filter(GDK_INTERP_HYPER) == CAIRO_FILTER_BEST);
+    assert(uv_screen_scale_filter((GdkInterpType)99) == CAIRO_FILTER_BEST);
+
+    cairo_surface_t *source = cairo_image_surface_create(CAIRO_FORMAT_RGB24, 32, 32);
+    uint32_t *pixels = (uint32_t *)cairo_image_surface_get_data(source);
+    for (int y = 0; y < 32; y++) {
+        for (int x = 0; x < 32; x++) {
+            pixels[y * 32 + x] = x % 2 ? 0x00ffffff : 0;
+        }
+    }
+    cairo_surface_mark_dirty(source);
+
+    cairo_surface_t *scaled = cairo_image_surface_create(CAIRO_FORMAT_RGB24, 8, 8);
+    cairo_t *cr = cairo_create(scaled);
+    cairo_scale(cr, 0.25, 0.25);
+    cairo_set_source_surface(cr, source, 0, 0);
+    cairo_pattern_set_filter(cairo_get_source(cr), uv_screen_scale_filter(GDK_INTERP_HYPER));
+    cairo_paint(cr);
+    assert(cairo_status(cr) == CAIRO_STATUS_SUCCESS);
+    cairo_surface_flush(scaled);
+    pixels = (uint32_t *)cairo_image_surface_get_data(scaled);
+    /* Downsampling must blend fine stripes instead of dropping alternating pixels. */
+    unsigned int gray = pixels[3 * 8 + 3] & 0xff;
+    assert(gray > 64 && gray < 192);
+
+    cairo_destroy(cr);
+    cairo_surface_destroy(scaled);
+    cairo_surface_destroy(source);
+    printf("[✓] Scale quality mapping and downsampling verified.\n");
+}
+
 static void test_screen_reinit(void)
 {
     printf("[*] Testing dynamic screen reinitialization...\n");
@@ -550,6 +586,7 @@ int main(void)
     test_registration_reply_parsing();
     test_captcha_challenge();
     test_lookup_reply_parsing();
+    test_screen_scale_filter();
     test_screen_reinit();
     test_auth_retry_callback();
 

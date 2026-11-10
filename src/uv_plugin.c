@@ -277,7 +277,7 @@ static gboolean remmina_plugin_ultraviewer_on_draw(GtkWidget *widget, cairo_t *c
             cairo_translate(cr, ox, oy);
             cairo_scale(cr, scale, scale);
             cairo_set_source_surface(cr, r->cairo_surface, 0, 0);
-            cairo_pattern_set_filter(cairo_get_source(cr), (cairo_filter_t)remmina_plugin_service->pref_get_scale_quality());
+            cairo_pattern_set_filter(cairo_get_source(cr), uv_screen_scale_filter(remmina_plugin_service->pref_get_scale_quality()));
             cairo_paint(cr);
 
             if (gpdata->show_cursor && gpdata->has_remote_cursor) {
